@@ -1,7 +1,5 @@
 streamlit
-opencv-python-headless
 easyocr
-gspread
-oauth2client
-Pillow
+opencv-python-headless
 numpy
+pillow
