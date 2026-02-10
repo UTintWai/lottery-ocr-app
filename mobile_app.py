@@ -59,13 +59,13 @@ if uploaded_file is not None:
                 cx, cy = np.mean([p[0] for p in bbox]), np.mean([p[1] for p in bbox])
                 x_pos = cx / w
                 
-                # --- အတိုင်အလိုက် နေရာချသည့် Logic ---
+                # --- တိုင်အလိုက် တည်နေရာကို တိတိကျကျ ခွဲခြားခြင်း ---
                 if col_mode == "၂ တိုင်":
                     c_idx = 0 if x_pos < 0.50 else 2
                 elif col_mode == "၄ တိုင်":
-                    if x_pos < 0.20: c_idx = 0
-                    elif x_pos < 0.45: c_idx = 2
-                    elif x_pos < 0.70: c_idx = 4
+                    if x_pos < 0.25: c_idx = 0
+                    elif x_pos < 0.50: c_idx = 2
+                    elif x_pos < 0.75: c_idx = 4
                     else: c_idx = 6
                 elif col_mode == "၆ တိုင်":
                     if x_pos < 0.16: c_idx = 0
@@ -74,43 +74,38 @@ if uploaded_file is not None:
                     elif x_pos < 0.66: c_idx = 3
                     elif x_pos < 0.83: c_idx = 4
                     else: c_idx = 5
-                else: # ၈ တိုင်
-                    if x_pos < 0.12: c_idx = 0
+                else: # ၈ တိုင် (အစ်ကို့စာမူပုံစံအတိုင်း)
+                    if x_pos < 0.125: c_idx = 0
                     elif x_pos < 0.25: c_idx = 1
-                    elif x_pos < 0.38: c_idx = 2
+                    elif x_pos < 0.375: c_idx = 2
                     elif x_pos < 0.50: c_idx = 3
-                    elif x_pos < 0.63: c_idx = 4
+                    elif x_pos < 0.625: c_idx = 4
                     elif x_pos < 0.75: c_idx = 5
-                    elif x_pos < 0.88: c_idx = 6
+                    elif x_pos < 0.875: c_idx = 6
                     else: c_idx = 7
 
                 r_idx = int((cy - top_y) // cell_h)
                 if 0 <= r_idx < num_rows:
-                    clean = text.strip().replace(" ", "")
+                    clean = text.strip()
+                    # ဂဏန်း လုံးဝမပါရင် Ditto Mark လို့ သတ်မှတ်မယ်
                     has_digit = any(char.isdigit() for char in clean)
-                    grid_data[r_idx][c_idx] = "DITTO_MARK" if not has_digit and len(clean) > 0 else clean
+                    grid_data[r_idx][c_idx] = "DITTO" if not has_digit and len(clean) > 0 else clean
 
-            
-                        # --- Auto-fill & digit-formatting logic (အတိကျဆုံးပြင်ဆင်ချက်) ---
+            # --- အလိုအလျောက် ဖြည့်စွက်ခြင်းနှင့် ဂဏန်းပုံစံညှိခြင်း ---
             last_valid = [""] * 8
             for r in range(num_rows):
                 for c in range(8):
-                    if grid_data[r][c] in ["DITTO_MARK", ""]:
+                    val = str(grid_data[r][c])
+                    if val in ["DITTO", ""]:
                         grid_data[r][c] = last_valid[c]
                     else:
-                        # စာသားတွေကိုဖယ်ပြီး ဂဏန်းပဲယူမယ်
-                        val = str(grid_data[r][c])
                         digits = re.sub(r'\D', '', val)
-                        
-                        # Column A, C, E, G (ဂဏန်းတိုင်များ) အတွက် ၃ လုံးတိတိ ညှိမယ်
+                        # ဂဏန်းတိုင် (A, C, E, G) ဆိုရင် ၃ လုံးတိတိ ညှိမယ်
                         if c in [0, 2, 4, 6]:
-                            if digits:
-                                # ၃ လုံးထက်ပိုရင် နောက်ဆုံး ၃ လုံးပဲယူမယ်၊ လိုရင် ရှေ့က 0 ဖြည့်မယ်
-                                grid_data[r][c] = digits[-3:].zfill(3)
-                        # Column B, D, F, H (ထိုးကြေးတိုင်များ) အတွက် ဖတ်မိတဲ့အတိုင်းထားမယ်
+                            grid_data[r][c] = digits[-3:].zfill(3) if digits else ""
+                        # ထိုးကြေးတိုင်ဆိုရင် ဖတ်မိတဲ့အတိုင်း ထားမယ်
                         else:
                             grid_data[r][c] = digits
-                            
                         last_valid[c] = grid_data[r][c]
 
             st.session_state['data_final'] = grid_data
