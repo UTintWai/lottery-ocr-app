@@ -16,7 +16,6 @@ st.set_page_config(page_title="Lottery Pro 2026", layout="wide")
 creds = None
 scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
 
-# Secret ဖတ်သည့်အပိုင်းကို Error မတက်အောင် သေချာပြင်ထားပါသည်
 if "GCP_SERVICE_ACCOUNT_FILE" in st.secrets:
     try:
         secret_info = json.loads(st.secrets["GCP_SERVICE_ACCOUNT_FILE"])
@@ -31,12 +30,13 @@ def load_ocr():
     return easyocr.Reader(['en'], gpu=False)
 
 reader = load_ocr()
-st.title("🎰 Lottery OCR (2, 4, 8 Columns)")
+st.title("🎰 Lottery OCR (Multi-Column)")
 
 with st.sidebar:
     st.header("⚙️ Settings")
     num_rows = st.number_input("အတန်းအရေအတွက်", min_value=1, value=25)
-    col_mode = st.selectbox("အတိုင်အရေအတွက် ရွေးပါ", ["၂ တိုင်", "၄ တိုင်", "၈ တိုင်"])
+    # ၆ တိုင် ရွေးစရာကို ဒီမှာ ထည့်ပေးထားပါသည်
+    col_mode = st.selectbox("အတိုင်အရေအတွက် ရွေးပါ", ["၂ တိုင်", "၄ တိုင်", "၆ တိုင်", "၈ တိုင်"])
 
 uploaded_file = st.file_uploader("ပုံတင်ရန်", type=["jpg", "jpeg", "png"])
 
@@ -60,7 +60,7 @@ if uploaded_file is not None:
                 cx, cy = np.mean([p[0] for p in bbox]), np.mean([p[1] for p in bbox])
                 x_pos = cx / w
                 
-                # --- တိုင်အလိုက် တည်နေရာ Logic (အမှန်ဆုံးပုံစံ) ---
+                # --- တိုင်အလိုက် နေရာချသည့် Logic (၂၊ ၄၊ ၆၊ ၈ တိုင် အားလုံးအတွက်) ---
                 if col_mode == "၂ တိုင်":
                     c_idx = 0 if x_pos < 0.50 else 1
                 elif col_mode == "၄ တိုင်":
@@ -68,6 +68,13 @@ if uploaded_file is not None:
                     elif x_pos < 0.50: c_idx = 1
                     elif x_pos < 0.75: c_idx = 2
                     else: c_idx = 3
+                elif col_mode == "၆ တိုင်":
+                    if x_pos < 0.166: c_idx = 0
+                    elif x_pos < 0.333: c_idx = 1
+                    elif x_pos < 0.50: c_idx = 2
+                    elif x_pos < 0.666: c_idx = 3
+                    elif x_pos < 0.833: c_idx = 4
+                    else: c_idx = 5
                 else: # ၈ တိုင်
                     c_idx = int(x_pos * 8)
                     c_idx = min(7, max(0, c_idx))
@@ -78,7 +85,7 @@ if uploaded_file is not None:
                     has_digit = any(char.isdigit() for char in clean)
                     grid_data[r_idx][c_idx] = "DITTO" if not has_digit and len(clean) > 0 else clean
 
-            # --- Auto-fill & Format Logic ---
+            # --- ဂဏန်းပုံစံညှိခြင်း (ဂဏန်းတိုင် = ၃ လုံး၊ ထိုးကြေးတိုင် = အမှန်အတိုင်း) ---
             last_valid = [""] * 8
             for r in range(num_rows):
                 for c in range(8):
@@ -87,7 +94,7 @@ if uploaded_file is not None:
                         grid_data[r][c] = last_valid[c]
                     else:
                         digits = re.sub(r'\D', '', val)
-                        # ဂဏန်းတိုင်များ (A, C, E, G) ကို ၃ လုံးညှိမည်
+                        # ဂဏန်းတိုင်များ (A, C, E, G) - Index 0, 2, 4, 6
                         if c in [0, 2, 4, 6] and digits:
                             grid_data[r][c] = digits[-3:].zfill(3)
                         else:
