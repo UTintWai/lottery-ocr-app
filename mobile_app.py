@@ -59,14 +59,16 @@ if uploaded_file is not None:
                 cx, cy = np.mean([p[0] for p in bbox]), np.mean([p[1] for p in bbox])
                 x_pos = cx / w
                 
-                # --- တိုင်အလိုက် တည်နေရာကို တိတိကျကျ ခွဲခြားခြင်း ---
+                # --- တိုင်အလိုက် တည်နေရာကို တိတိကျကျ ပိုင်းခြားခြင်း (အချောသတ် Logic) ---
                 if col_mode == "၂ တိုင်":
-                    c_idx = 0 if x_pos < 0.50 else 2
+                    # ဘယ်ဘက်ခြမ်းကို ဂဏန်းတိုင် (0)၊ ညာဘက်ခြမ်းကို ထိုးကြေးတိုင် (1) လို့ သတ်မှတ်
+                    c_idx = 0 if x_pos < 0.50 else 1
                 elif col_mode == "၄ တိုင်":
-                    if x_pos < 0.25: c_idx = 0
-                    elif x_pos < 0.50: c_idx = 2
-                    elif x_pos < 0.75: c_idx = 4
-                    else: c_idx = 6
+                    # အချိုးအစားကို ၄ ပိုင်း တိတိကျကျ ခွဲလိုက်တာပါ
+                    if x_pos < 0.25: c_idx = 0      # ဂဏန်းတိုင် ၁
+                    elif x_pos < 0.50: c_idx = 1    # ထိုးကြေးတိုင် ၁
+                    elif x_pos < 0.75: c_idx = 2    # ဂဏန်းတိုင် ၂
+                    else: c_idx = 3                 # ထိုးကြေးတိုင် ၂
                 elif col_mode == "၆ တိုင်":
                     if x_pos < 0.16: c_idx = 0
                     elif x_pos < 0.33: c_idx = 1
@@ -83,30 +85,6 @@ if uploaded_file is not None:
                     elif x_pos < 0.75: c_idx = 5
                     elif x_pos < 0.875: c_idx = 6
                     else: c_idx = 7
-
-                r_idx = int((cy - top_y) // cell_h)
-                if 0 <= r_idx < num_rows:
-                    clean = text.strip()
-                    # ဂဏန်း လုံးဝမပါရင် Ditto Mark လို့ သတ်မှတ်မယ်
-                    has_digit = any(char.isdigit() for char in clean)
-                    grid_data[r_idx][c_idx] = "DITTO" if not has_digit and len(clean) > 0 else clean
-
-            # --- အလိုအလျောက် ဖြည့်စွက်ခြင်းနှင့် ဂဏန်းပုံစံညှိခြင်း ---
-            last_valid = [""] * 8
-            for r in range(num_rows):
-                for c in range(8):
-                    val = str(grid_data[r][c])
-                    if val in ["DITTO", ""]:
-                        grid_data[r][c] = last_valid[c]
-                    else:
-                        digits = re.sub(r'\D', '', val)
-                        # ဂဏန်းတိုင် (A, C, E, G) ဆိုရင် ၃ လုံးတိတိ ညှိမယ်
-                        if c in [0, 2, 4, 6]:
-                            grid_data[r][c] = digits[-3:].zfill(3) if digits else ""
-                        # ထိုးကြေးတိုင်ဆိုရင် ဖတ်မိတဲ့အတိုင်း ထားမယ်
-                        else:
-                            grid_data[r][c] = digits
-                        last_valid[c] = grid_data[r][c]
 
             st.session_state['data_final'] = grid_data
 
