@@ -30,13 +30,12 @@ def load_ocr():
     return easyocr.Reader(['en'], gpu=False)
 
 reader = load_ocr()
-st.title("🎰 Lottery OCR (Flexible Columns)")
+st.title("🎰 Lottery OCR (2, 4, 6, 8 Columns)")
 
 with st.sidebar:
     st.header("⚙️ Settings")
     num_rows = st.number_input("အတန်းအရေအတွက်", min_value=1, value=25)
-    # --- အတိုင်ရွေးချယ်စရာ ထည့်သွင်းခြင်း ---
-    col_mode = st.selectbox("အတိုင်အရေအတွက် ရွေးပါ", ["၄ တိုင် (ဂဏန်းသီးသန့်)", "၈ တိုင် (စာသားပါ)"])
+    col_mode = st.selectbox("အတိုင်အရေအတွက် ရွေးပါ", ["၂ တိုင်", "၄ တိုင်", "၆ တိုင်", "၈ တိုင်"])
 
 uploaded_file = st.file_uploader("ပုံတင်ရန်", type=["jpg", "jpeg", "png"])
 
@@ -60,14 +59,22 @@ if uploaded_file is not None:
                 cx, cy = np.mean([p[0] for p in bbox]), np.mean([p[1] for p in bbox])
                 x_pos = cx / w
                 
-                # --- ရွေးချယ်ထားသော အတိုင်အလိုက် နေရာချခြင်း ---
-                if col_mode == "၄ တိုင် (ဂဏန်းသီးသန့်)":
+                # --- အတိုင်အလိုက် နေရာချသည့် Logic ---
+                if col_mode == "၂ တိုင်":
+                    c_idx = 0 if x_pos < 0.50 else 2
+                elif col_mode == "၄ တိုင်":
                     if x_pos < 0.20: c_idx = 0
                     elif x_pos < 0.45: c_idx = 2
                     elif x_pos < 0.70: c_idx = 4
                     else: c_idx = 6
-                else:
-                    # ၈ တိုင် စနစ်
+                elif col_mode == "၆ တိုင်":
+                    if x_pos < 0.16: c_idx = 0
+                    elif x_pos < 0.33: c_idx = 1
+                    elif x_pos < 0.50: c_idx = 2
+                    elif x_pos < 0.66: c_idx = 3
+                    elif x_pos < 0.83: c_idx = 4
+                    else: c_idx = 5
+                else: # ၈ တိုင်
                     if x_pos < 0.12: c_idx = 0
                     elif x_pos < 0.25: c_idx = 1
                     elif x_pos < 0.38: c_idx = 2
@@ -85,14 +92,12 @@ if uploaded_file is not None:
 
             # --- Auto-fill Logic ---
             last_valid = [""] * 8
-            target_cols = [0, 2, 4, 6] if col_mode == "၄ တိုင် (ဂဏန်းသီးသန့်)" else range(8)
-            
             for r in range(num_rows):
-                for c in target_cols:
+                for c in range(8):
                     if grid_data[r][c] in ["DITTO_MARK", ""]:
                         grid_data[r][c] = last_valid[c]
                     else:
-                        if c in [0, 2, 4, 6]:
+                        if any(char.isdigit() for char in str(grid_data[r][c])):
                             digits = re.sub(r'\D', '', str(grid_data[r][c]))
                             if digits: grid_data[r][c] = digits.zfill(3)
                         last_valid[c] = grid_data[r][c]
