@@ -12,10 +12,11 @@ import json
 # --- Page Setting ---
 st.set_page_config(page_title="Lottery Pro 2026", layout="wide")
 
-# --- Google Credentials Setup ---
+# --- Google Credentials ---
 creds = None
 scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
 
+# Secret ဖတ်သည့်အပိုင်းကို Error မတက်အောင် သေချာပြင်ထားပါသည်
 if "GCP_SERVICE_ACCOUNT_FILE" in st.secrets:
     try:
         secret_info = json.loads(st.secrets["GCP_SERVICE_ACCOUNT_FILE"])
@@ -30,12 +31,12 @@ def load_ocr():
     return easyocr.Reader(['en'], gpu=False)
 
 reader = load_ocr()
-st.title("🎰 Lottery OCR (2, 4, 6, 8 Columns)")
+st.title("🎰 Lottery OCR (2, 4, 8 Columns)")
 
 with st.sidebar:
     st.header("⚙️ Settings")
     num_rows = st.number_input("အတန်းအရေအတွက်", min_value=1, value=25)
-    col_mode = st.selectbox("အတိုင်အရေအတွက် ရွေးပါ", ["၂ တိုင်", "၄ တိုင်", "၆ တိုင်", "၈ တိုင်"])
+    col_mode = st.selectbox("အတိုင်အရေအတွက် ရွေးပါ", ["၂ တိုင်", "၄ တိုင်", "၈ တိုင်"])
 
 uploaded_file = st.file_uploader("ပုံတင်ရန်", type=["jpg", "jpeg", "png"])
 
@@ -53,38 +54,45 @@ if uploaded_file is not None:
             y_pts = sorted([res[0][0][1] for res in results])
             top_y = y_pts[0] if y_pts else 0
             bot_y = y_pts[-1] if y_pts else h
-            cell_h = (bot_y - top_y) / (num_rows - 0.5)
+            cell_h = (bot_y - top_y) / (num_rows if num_rows > 0 else 1)
 
             for (bbox, text, prob) in results:
                 cx, cy = np.mean([p[0] for p in bbox]), np.mean([p[1] for p in bbox])
                 x_pos = cx / w
                 
-                # --- တိုင်အလိုက် တည်နေရာကို တိတိကျကျ ပိုင်းခြားခြင်း (အချောသတ် Logic) ---
+                # --- တိုင်အလိုက် တည်နေရာ Logic (အမှန်ဆုံးပုံစံ) ---
                 if col_mode == "၂ တိုင်":
-                    # ဘယ်ဘက်ခြမ်းကို ဂဏန်းတိုင် (0)၊ ညာဘက်ခြမ်းကို ထိုးကြေးတိုင် (1) လို့ သတ်မှတ်
                     c_idx = 0 if x_pos < 0.50 else 1
                 elif col_mode == "၄ တိုင်":
-                    # အချိုးအစားကို ၄ ပိုင်း တိတိကျကျ ခွဲလိုက်တာပါ
-                    if x_pos < 0.25: c_idx = 0      # ဂဏန်းတိုင် ၁
-                    elif x_pos < 0.50: c_idx = 1    # ထိုးကြေးတိုင် ၁
-                    elif x_pos < 0.75: c_idx = 2    # ဂဏန်းတိုင် ၂
-                    else: c_idx = 3                 # ထိုးကြေးတိုင် ၂
-                elif col_mode == "၆ တိုင်":
-                    if x_pos < 0.16: c_idx = 0
-                    elif x_pos < 0.33: c_idx = 1
-                    elif x_pos < 0.50: c_idx = 2
-                    elif x_pos < 0.66: c_idx = 3
-                    elif x_pos < 0.83: c_idx = 4
-                    else: c_idx = 5
-                else: # ၈ တိုင် (အစ်ကို့စာမူပုံစံအတိုင်း)
-                    if x_pos < 0.125: c_idx = 0
-                    elif x_pos < 0.25: c_idx = 1
-                    elif x_pos < 0.375: c_idx = 2
-                    elif x_pos < 0.50: c_idx = 3
-                    elif x_pos < 0.625: c_idx = 4
-                    elif x_pos < 0.75: c_idx = 5
-                    elif x_pos < 0.875: c_idx = 6
-                    else: c_idx = 7
+                    if x_pos < 0.25: c_idx = 0
+                    elif x_pos < 0.50: c_idx = 1
+                    elif x_pos < 0.75: c_idx = 2
+                    else: c_idx = 3
+                else: # ၈ တိုင်
+                    c_idx = int(x_pos * 8)
+                    c_idx = min(7, max(0, c_idx))
+
+                r_idx = int((cy - top_y) // cell_h)
+                if 0 <= r_idx < num_rows:
+                    clean = text.strip()
+                    has_digit = any(char.isdigit() for char in clean)
+                    grid_data[r_idx][c_idx] = "DITTO" if not has_digit and len(clean) > 0 else clean
+
+            # --- Auto-fill & Format Logic ---
+            last_valid = [""] * 8
+            for r in range(num_rows):
+                for c in range(8):
+                    val = str(grid_data[r][c])
+                    if val in ["DITTO", ""]:
+                        grid_data[r][c] = last_valid[c]
+                    else:
+                        digits = re.sub(r'\D', '', val)
+                        # ဂဏန်းတိုင်များ (A, C, E, G) ကို ၃ လုံးညှိမည်
+                        if c in [0, 2, 4, 6] and digits:
+                            grid_data[r][c] = digits[-3:].zfill(3)
+                        else:
+                            grid_data[r][c] = digits
+                        last_valid[c] = grid_data[r][c]
 
             st.session_state['data_final'] = grid_data
 
@@ -99,6 +107,6 @@ if 'data_final' in st.session_state:
                 sheet = client.open("LotteryData").sheet1
                 sheet.clear()
                 sheet.update("A1", edited_df, value_input_option="RAW")
-                st.success("🎉 ဒေတာများကို Google Sheet သို့ ပို့ပြီးပါပြီ။")
+                st.success("🎉 Google Sheet သို့ ပို့ပြီးပါပြီ။")
             except Exception as e:
-                st.error(f"⚠️ Sheet Error: {str(e)}")
+                st.error(f"Sheet Error: {e}")
