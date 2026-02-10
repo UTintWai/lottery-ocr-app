@@ -1,7 +1,7 @@
 streamlit
 easyocr
-numpy
-opencv-python-headless
 gspread
 oauth2client
+opencv-python-headless
+numpy
 Pillow
