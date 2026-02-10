@@ -90,16 +90,25 @@ if uploaded_file is not None:
                     has_digit = any(char.isdigit() for char in clean)
                     grid_data[r_idx][c_idx] = "DITTO_MARK" if not has_digit and len(clean) > 0 else clean
 
-            # --- Auto-fill Logic ---
+            
+                        # --- Auto-fill & digit-formatting logic ---
             last_valid = [""] * 8
             for r in range(num_rows):
                 for c in range(8):
+                    # ဒေတာမရှိရင် အပေါ်ကဟာကို ပြန်သုံးမယ် (Ditto mark logic)
                     if grid_data[r][c] in ["DITTO_MARK", ""]:
                         grid_data[r][c] = last_valid[c]
                     else:
-                        if any(char.isdigit() for char in str(grid_data[r][c])):
-                            digits = re.sub(r'\D', '', str(grid_data[r][c]))
-                            if digits: grid_data[r][c] = digits.zfill(3)
+                        # ဂဏန်းပါရင် စာလုံးတွေကိုဖယ်ပြီး ဂဏန်းပဲယူမယ်
+                        digits = re.sub(r'\D', '', str(grid_data[r][c]))
+                        
+                        # အတိုင် 0, 2, 4, 6 (Column index 0, 2, 4, 6) အတွက် သုံးလုံးဂဏန်းဖြစ်အောင် ညှိမယ်
+                        # (Python မှာ index က 0 ကစလို့ အစ်ကို့ရဲ့ ပထမတိုင်၊ တတိယတိုင်... တွေကို ဆိုလိုတာပါ)
+                        if c in [0, 2, 4, 6] and digits:
+                            grid_data[r][c] = digits.zfill(3) # ၃ လုံးပြည့်အောင် ရှေ့က 0 ဖြည့်မယ်
+                        else:
+                            grid_data[r][c] = digits # ကျန်တဲ့ ထိုးကြေးတိုင်တွေကိုတော့ ဖတ်မိတဲ့အတိုင်းထားမယ်
+                            
                         last_valid[c] = grid_data[r][c]
 
             st.session_state['data_final'] = grid_data
