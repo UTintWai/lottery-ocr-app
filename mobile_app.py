@@ -2,7 +2,6 @@ import streamlit as st
 import numpy as np
 import easyocr
 import gspread
-import cv2
 import re
 import json
 from PIL import Image
@@ -39,7 +38,7 @@ def expand_r_sorted(text):
         return sorted(list(perms))
     return [digits.zfill(3)] if digits else []
 
-st.title("🎰 Lottery OCR Pro (Final Updated)")
+st.title("🎰 Lottery OCR Pro (Max Detection)")
 
 with st.sidebar:
     st.header("⚙️ Settings")
@@ -49,17 +48,15 @@ with st.sidebar:
 uploaded_file = st.file_uploader("ပုံတင်ရန်", type=["jpg", "png", "jpeg"])
 
 if uploaded_file:
-    file_bytes = np.asarray(bytearray(uploaded_file.read()), dtype=np.uint8)
-    img = cv2.imdecode(file_bytes, 1)
-    # 4, 7, 2, 5 တွေ ပိုပီသအောင် contrast မြှင့်ထားသည်
-    gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
-    processed = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)[1]
-    st.image(processed, caption="AI ဖတ်မည့်ပုံစံ", use_container_width=True)
+    image = Image.open(BytesIO(uploaded_file.read()))
+    img_array = np.array(image)
+    st.image(image, use_container_width=True)
 
     if st.button("🔍 ဒေတာဖတ်မည်"):
-        with st.spinner("ဒေတာများကို ခွဲခြားနေပါသည်..."):
-            results = reader.readtext(processed)
-            h, w = processed.shape[:2]
+        with st.spinner("AI အပြည့်အဝ ဖတ်နေပါသည်..."):
+            # အရင်အတိုင်း အကုန်ဖတ်နိုင်အောင် paragraph=False ထားသည်
+            results = reader.readtext(img_array, detail=1) 
+            h, w = img_array.shape[:2]
             grid_data = [["" for _ in range(8)] for _ in range(num_rows)]
             
             y_pts = sorted([res[0][0][1] for res in results])
@@ -70,7 +67,7 @@ if uploaded_file:
                 cx, cy = np.mean([p[0] for p in bbox]), np.mean([p[1] for p in bbox])
                 x_pos = cx / w
                 
-                # --- Column Logic (Grid System) ---
+                # --- Grid System Alignment ---
                 if col_mode == "၆ တိုင်": c_idx = min(5, int(x_pos * 6))
                 elif col_mode == "၄ တိုင်": c_idx = min(3, int(x_pos * 4))
                 elif col_mode == "၂ တိုင်": c_idx = 0 if x_pos < 0.5 else 1
@@ -78,8 +75,8 @@ if uploaded_file:
 
                 r_idx = int((cy - top_y) // cell_h)
                 if 0 <= r_idx < num_rows:
-                    # ဂဏန်း၊ R နှင့် ထိုးကြေးကို သေချာဖတ်ခြင်း
-                    clean = re.sub(r'[^0-9R]', '', text.upper())
+                    # R ပါအောင် clean logic ပြင်ထားသည်
+                    clean = re.sub(r'[^0-9Rr]', '', text.upper())
                     grid_data[r_idx][c_idx] = clean
             st.session_state['data'] = grid_data
 
@@ -93,14 +90,13 @@ if 'data' in st.session_state:
                 client = gspread.authorize(creds)
                 ss = client.open("LotteryData")
                 
-                # Sheet 1: Append မူရင်းဒေတာ
+                # Sheet 1: မူရင်းဒေတာ သိမ်းမည်
                 sh1 = ss.get_worksheet(0)
                 sh1.append_rows(edited)
                 
-                # Sheet 2: ပတ်လည်ဖြန့်ခြင်းနှင့် ငယ်စဉ်ကြီးလိုက်စီခြင်း
+                # Sheet 2: ပတ်လည်ဖြန့်ပြီး ငယ်စဉ်ကြီးလိုက်စီသိမ်းမည်
                 sh2 = ss.get_worksheet(1)
                 expanded_list = []
-                # အတွဲအတွဲလိုက်ယူခြင်း (ဂဏန်းတိုင်၊ ထိုးကြေးတိုင်)
                 if col_mode == "၆ တိုင်": pairs = [(0,1), (2,3), (4,5)]
                 elif col_mode == "၄ တိုင်": pairs = [(0,1), (2,3)]
                 elif col_mode == "၂ တိုင်": pairs = [(0,1)]
@@ -116,11 +112,11 @@ if 'data' in st.session_state:
                             else:
                                 expanded_list.append([g_val[-3:].zfill(3), t_val])
                 
-                # Sheet 2 ထဲက ဂဏန်းတွေကို အငယ်ဆုံးကနေ အကြီးဆုံး တစ်ခါတည်း စီသိမ်းမည်
+                # Sheet 2 ဒေတာများကို အငယ်မှအကြီး စီလိုက်ခြင်း
                 expanded_list.sort(key=lambda x: x[0])
                 
                 if expanded_list:
                     sh2.append_rows(expanded_list)
-                st.success("🎉 Sheet 1 (Append) နှင့် Sheet 2 (Sorted) သိမ်းပြီးပါပြီ။")
+                st.success("🎉 သိမ်းဆည်းမှု အောင်မြင်ပါသည်။")
             except Exception as e:
                 st.error(f"Sheet Error: {e}")
