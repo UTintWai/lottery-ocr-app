@@ -2,21 +2,19 @@ import streamlit as st
 import numpy as np
 import easyocr
 import gspread
+import cv2
 from PIL import Image
 from io import BytesIO
 from oauth2client.service_account import ServiceAccountCredentials
-import os
 import re
 import json
 from itertools import permutations
 
-# --- Page Setting ---
 st.set_page_config(page_title="Lottery Pro 2026", layout="wide")
 
-# --- Google Credentials ---
+# --- Credentials ---
 creds = None
 scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
-
 if "GCP_SERVICE_ACCOUNT_FILE" in st.secrets:
     try:
         secret_info = json.loads(st.secrets["GCP_SERVICE_ACCOUNT_FILE"])
@@ -28,20 +26,18 @@ if "GCP_SERVICE_ACCOUNT_FILE" in st.secrets:
 
 @st.cache_resource
 def load_ocr():
-    # အင်္ဂလိပ်စာလုံး 'en' ပါမှ R ကို ဖတ်နိုင်မှာပါ
     return easyocr.Reader(['en'], gpu=False)
 
 reader = load_ocr()
 
 def expand_r_sorted(text):
-    """267R ကို ၆ ကွက်ဖြန့်ပြီး ငယ်စဉ်ကြီးလိုက်စီခြင်း"""
     digits = re.sub(r'\D', '', text)
     if len(digits) == 3:
         perms = set([''.join(p) for p in permutations(digits)])
         return sorted(list(perms))
     return [digits.zfill(3)] if digits else []
 
-st.title("🎰 Lottery OCR (Full Detection Model)")
+st.title("🎰 Lottery OCR (Ditto & Auto-fill)")
 
 with st.sidebar:
     st.header("⚙️ Settings")
@@ -51,49 +47,43 @@ with st.sidebar:
 uploaded_file = st.file_uploader("ပုံတင်ရန်", type=["jpg", "jpeg", "png"])
 
 if uploaded_file is not None:
-    image = Image.open(BytesIO(uploaded_file.read()))
-    img_array = np.array(image)
-    st.image(image, use_container_width=True)
+    file_bytes = np.asarray(bytearray(uploaded_file.read()), dtype=np.uint8)
+    img_array = cv2.imdecode(file_bytes, 1)
+    st.image(uploaded_file, use_container_width=True)
 
-    if st.button("🔍 AI ဖြင့် ဖတ်မည်"):
-        with st.spinner("ဒေတာများကို အပြည့်အဝ ဖတ်နေပါသည်..."):
-            # အစ်ကို အဆင်ပြေခဲ့တဲ့ မူရင်း readtext (detail=1) အတိုင်း သုံးထားပါတယ်
-            results = reader.readtext(img_array)
+    if st.button("🔍 အကုန်ဖတ်မည် (Auto-fill Mode)"):
+        with st.spinner("။ များကို အလိုအလျောက် ဖြည့်စွက်နေပါသည်..."):
             h, w = img_array.shape[:2]
             grid_data = [["" for _ in range(8)] for _ in range(num_rows)]
             
-            y_pts = sorted([res[0][0][1] for res in results])
-            top_y = y_pts[0] if y_pts else 0
-            bot_y = y_pts[-1] if y_pts else h
-            cell_h = (bot_y - top_y) / (num_rows if num_rows > 0 else 1)
+            num_cols = 2 if col_mode == "၂ တိုင်" else (4 if col_mode == "၄ တိုင်" else (6 if col_mode == "၆ တိုင်" else 8))
+            col_width = w / num_cols
 
-            for (bbox, text, prob) in results:
-                cx, cy = np.mean([p[0] for p in bbox]), np.mean([p[1] for p in bbox])
-                x_pos = cx / w
+            for c in range(num_cols):
+                crop_img = img_array[0:h, int(c*col_width):int((c+1)*col_width)]
+                col_results = reader.readtext(crop_img)
                 
-                # အစ်ကို့ရဲ့ မူရင်း Grid Logic အတိုင်း နေရာချပါတယ်
-                if col_mode == "၂ တိုင်":
-                    c_idx = 0 if x_pos < 0.50 else 1
-                elif col_mode == "၄ တိုင်":
-                    if x_pos < 0.25: c_idx = 0
-                    elif x_pos < 0.50: c_idx = 1
-                    elif x_pos < 0.75: c_idx = 2
-                    else: c_idx = 3
-                elif col_mode == "၆ တိုင်":
-                    if x_pos < 0.166: c_idx = 0
-                    elif x_pos < 0.333: c_idx = 1
-                    elif x_pos < 0.50: c_idx = 2
-                    elif x_pos < 0.666: c_idx = 3
-                    elif x_pos < 0.833: c_idx = 4
-                    else: c_idx = 5
-                else: 
-                    c_idx = min(7, max(0, int(x_pos * 8)))
+                for (bbox, text, prob) in col_results:
+                    cy = np.mean([p[1] for p in bbox])
+                    r_idx = int((cy / h) * num_rows)
+                    if 0 <= r_idx < num_rows:
+                        # R နှင့် ဂဏန်းများကို သိမ်းမည်။ ။ ကိုတော့ သီးသန့်စစ်မည်
+                        grid_data[r_idx][c] = text.strip()
 
-                r_idx = int((cy - top_y) // cell_h)
-                if 0 <= r_idx < num_rows:
-                    # ဂဏန်းနဲ့ R ကိုပဲ ဖတ်ယူမည် (ထိုးကြေးတိုင်အတွက် ဂဏန်းပဲယူမည်)
-                    clean = re.sub(r'[^0-9Rr]', '', text.upper())
-                    grid_data[r_idx][c_idx] = clean
+            # --- ။ (Ditto) နှင့် အကွက်လွတ်များအတွက် အပေါ်ကတန်ဖိုး ကူးထည့်ပေးသည့် Logic ---
+            for c in range(num_cols):
+                last_value = ""
+                for r in range(num_rows):
+                    current_val = grid_data[r][c]
+                    # အကယ်၍ ။ ပါလာလျှင် သို့မဟုတ် အကွက်လွတ်နေလျှင် (ထိုးကြေးတိုင်များအတွက်သာ ပိုအရေးကြီးသည်)
+                    if current_val in ["။", "။။", "〃", "''", ""] and last_value != "":
+                        grid_data[r][c] = last_value
+                    
+                    # ဂဏန်းတိုင်ဖြစ်ပါက R ပါမပါ စစ်မည်၊ ထိုးကြေးတိုင်ဖြစ်ပါက ဂဏန်းသန့်သန့်ယူမည်
+                    clean_val = re.sub(r'[^0-9Rr]', '', grid_data[r][c].upper())
+                    if clean_val:
+                        grid_data[r][c] = clean_val
+                        last_value = clean_val # နောက်တစ်တန်းအတွက် သိမ်းထားမည်
 
             st.session_state['data_final'] = grid_data
 
@@ -106,41 +96,25 @@ if 'data_final' in st.session_state:
             try:
                 client = gspread.authorize(creds)
                 ss = client.open("LotteryData")
-                
-                # Sheet 1: မူရင်းဒေတာကို Append လုပ်မည်
                 sh1 = ss.get_worksheet(0)
                 sh1.append_rows(edited_df)
                 
-                # Sheet 2: ပတ်လည်ဖြန့်ခြင်းနှင့် ငယ်စဉ်ကြီးလိုက်စီခြင်း
                 sh2 = ss.get_worksheet(1)
                 expanded_list = []
-                
-                # အတွဲလိုက်ခွဲခြားခြင်း (ဂဏန်းတိုင်၊ ထိုးကြေးတိုင်)
-                if col_mode == "၆ တိုင်": pairs = [(0,1), (2,3), (4,5)]
-                elif col_mode == "၄ တိုင်": pairs = [(0,1), (2,3)]
-                elif col_mode == "၂ တိုင်": pairs = [(0,1)]
-                else: pairs = [(0,1), (2,3), (4,5), (6,7)]
+                pairs = [(0,1), (2,3), (4,5), (6,7)] if num_cols == 8 else ([(0,1), (2,3), (4,5)] if num_cols == 6 else ([(0,1), (2,3)] if num_cols == 4 else [(0,1)]))
 
                 for row in edited_df:
                     for g_col, t_col in pairs:
-                        g_val = str(row[g_col])
-                        t_val = str(row[t_col])
+                        g_val, t_val = str(row[g_col]), str(row[t_col])
                         if g_val:
-                            # ပတ်လည် (R) ပါရင် ဖြန့်မည်
                             if 'R' in g_val.upper():
-                                for p in expand_r_sorted(g_val):
-                                    expanded_list.append([p, t_val])
+                                for p in expand_r_sorted(g_val): expanded_list.append([p, t_val])
                             else:
-                                # ဂဏန်းသက်သက်ဆိုရင် ၃ လုံးပြည့်အောင်ညှိမည်
                                 clean_num = re.sub(r'\D', '', g_val)
-                                if clean_num:
-                                    expanded_list.append([clean_num[-3:].zfill(3), t_val])
+                                if clean_num: expanded_list.append([clean_num[-3:].zfill(3), t_val])
                 
-                # Sheet 2 ဒေတာများကို အငယ်မှအကြီး စီလိုက်ခြင်း
                 expanded_list.sort(key=lambda x: x[0])
-                
-                if expanded_list:
-                    sh2.append_rows(expanded_list)
-                st.success("🎉 Sheet 1 နှင့် Sheet 2 သို့ အောင်မြင်စွာ ပို့ပြီးပါပြီ။")
+                if expanded_list: sh2.append_rows(expanded_list)
+                st.success("🎉 သိမ်းဆည်းမှု အောင်မြင်ပါသည်။")
             except Exception as e:
                 st.error(f"Sheet Error: {e}")
