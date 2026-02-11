@@ -39,10 +39,14 @@ def expand_r_sorted(text):
 
 st.title("🎰 Lottery OCR (Ditto & Auto-fill)")
 
+# --- Settings Sidebar ---
 with st.sidebar:
     st.header("⚙️ Settings")
     num_rows = st.number_input("အတန်းအရေအတွက်", min_value=1, value=25)
     col_mode = st.selectbox("အတိုင်အရေအတွက် ရွေးပါ", ["၂ တိုင်", "၄ တိုင်", "၆ တိုင်", "၈ တိုင်"])
+    
+    # 💡 ဒီနေရာမှာ num_cols ကို အသေ သတ်မှတ်ထားလိုက်ပါပြီ (ဒါမှ အောက်က ခလုပ်တွေ အားလုံးမှာ သုံးလို့ရမှာပါ)
+    num_cols = 2 if col_mode == "၂ တိုင်" else (4 if col_mode == "၄ တိုင်" else (6 if col_mode == "၆ တိုင်" else 8))
 
 uploaded_file = st.file_uploader("ပုံတင်ရန်", type=["jpg", "jpeg", "png"])
 
@@ -56,7 +60,6 @@ if uploaded_file is not None:
             h, w = img_array.shape[:2]
             grid_data = [["" for _ in range(8)] for _ in range(num_rows)]
             
-            num_cols = 2 if col_mode == "၂ တိုင်" else (4 if col_mode == "၄ တိုင်" else (6 if col_mode == "၆ တိုင်" else 8))
             col_width = w / num_cols
 
             for c in range(num_cols):
@@ -67,23 +70,19 @@ if uploaded_file is not None:
                     cy = np.mean([p[1] for p in bbox])
                     r_idx = int((cy / h) * num_rows)
                     if 0 <= r_idx < num_rows:
-                        # R နှင့် ဂဏန်းများကို သိမ်းမည်။ ။ ကိုတော့ သီးသန့်စစ်မည်
                         grid_data[r_idx][c] = text.strip()
 
-            # --- ။ (Ditto) နှင့် အကွက်လွတ်များအတွက် အပေါ်ကတန်ဖိုး ကူးထည့်ပေးသည့် Logic ---
             for c in range(num_cols):
                 last_value = ""
                 for r in range(num_rows):
                     current_val = grid_data[r][c]
-                    # အကယ်၍ ။ ပါလာလျှင် သို့မဟုတ် အကွက်လွတ်နေလျှင် (ထိုးကြေးတိုင်များအတွက်သာ ပိုအရေးကြီးသည်)
                     if current_val in ["။", "။။", "〃", "''", ""] and last_value != "":
                         grid_data[r][c] = last_value
                     
-                    # ဂဏန်းတိုင်ဖြစ်ပါက R ပါမပါ စစ်မည်၊ ထိုးကြေးတိုင်ဖြစ်ပါက ဂဏန်းသန့်သန့်ယူမည်
                     clean_val = re.sub(r'[^0-9Rr]', '', grid_data[r][c].upper())
                     if clean_val:
                         grid_data[r][c] = clean_val
-                        last_value = clean_val # နောက်တစ်တန်းအတွက် သိမ်းထားမည်
+                        last_value = clean_val
 
             st.session_state['data_final'] = grid_data
 
@@ -95,26 +94,35 @@ if 'data_final' in st.session_state:
         if creds:
             try:
                 client = gspread.authorize(creds)
-                ss = client.open("LotteryData")
+                ss = client.open("LotteryData") # Sheet နာမည် မှန်အောင် စစ်ပေးပါ
+                
+                # ပထမ Sheet ထဲ ထည့်ခြင်း
                 sh1 = ss.get_worksheet(0)
                 sh1.append_rows(edited_df)
                 
+                # ဒုတိယ Sheet (Expanded Data) ထဲ ထည့်ခြင်း
                 sh2 = ss.get_worksheet(1)
                 expanded_list = []
+                
+                # num_cols ကို အပေါ်ကနေ ယူသုံးထားပါတယ်
                 pairs = [(0,1), (2,3), (4,5), (6,7)] if num_cols == 8 else ([(0,1), (2,3), (4,5)] if num_cols == 6 else ([(0,1), (2,3)] if num_cols == 4 else [(0,1)]))
 
                 for row in edited_df:
                     for g_col, t_col in pairs:
-                        g_val, t_val = str(row[g_col]), str(row[t_col])
-                        if g_val:
-                            if 'R' in g_val.upper():
-                                for p in expand_r_sorted(g_val): expanded_list.append([p, t_val])
-                            else:
-                                clean_num = re.sub(r'\D', '', g_val)
-                                if clean_num: expanded_list.append([clean_num[-3:].zfill(3), t_val])
+                        # Index ကျော်မသွားအောင် စစ်ဆေးခြင်း
+                        if g_col < len(row) and t_col < len(row):
+                            g_val, t_val = str(row[g_col]), str(row[t_col])
+                            if g_val:
+                                if 'R' in g_val.upper():
+                                    for p in expand_r_sorted(g_val): expanded_list.append([p, t_val])
+                                else:
+                                    clean_num = re.sub(r'\D', '', g_val)
+                                    if clean_num: expanded_list.append([clean_num[-3:].zfill(3), t_val])
                 
                 expanded_list.sort(key=lambda x: x[0])
-                if expanded_list: sh2.append_rows(expanded_list)
+                if expanded_list: 
+                    sh2.append_rows(expanded_list)
+                
                 st.success("🎉 သိမ်းဆည်းမှု အောင်မြင်ပါသည်။")
             except Exception as e:
                 st.error(f"Sheet Error: {e}")
