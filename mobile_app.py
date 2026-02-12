@@ -35,13 +35,13 @@ def expand_r_sorted(text):
         return sorted(list(perms))
     return [digits.zfill(3)] if digits else []
 
-st.title("🎰 Lottery OCR (Auto-Sum & Aggregate)")
+st.title("🎰 Lottery OCR (Dynamic Grid Mode)")
 
 with st.sidebar:
     st.header("⚙️ Settings")
     num_rows = st.number_input("အတန်းအရေအတွက် (Rows)", min_value=1, value=25)
-    st.info("အကောင်းဆုံးရလဒ်အတွက် ၈ တိုင် (8 Columns) စနစ်ဖြင့် ဖတ်ပါမည်")
-    num_cols = 8
+    col_mode = st.selectbox("အတိုင်အရေအတွက် ရွေးပါ", ["၂ တိုင်", "၄ တိုင်", "၆ တိုင်", "၈ တိုင်"])
+    num_cols = int(col_mode.split()[0]) # "၈ တိုင်" -> 8
 
 uploaded_file = st.file_uploader("လက်ရေးမူပုံတင်ရန်", type=["jpg", "jpeg", "png"])
 
@@ -50,26 +50,31 @@ if uploaded_file is not None:
     img_array = cv2.imdecode(file_bytes, 1)
     st.image(uploaded_file, use_container_width=True)
 
-    if st.button("🔍 အကုန်ဖတ်မည် (Auto-fill Mode)"):
-        with st.spinner("စာသားများကို ဖတ်ရှုတွက်ချက်နေပါသည်..."):
+    if st.button("🔍 အကုန်ဖတ်မည် (Fast Mode)"):
+        with st.spinner("မြန်နှုန်းမြင့်စနစ်ဖြင့် ဖတ်နေပါသည်..."):
             h, w = img_array.shape[:2]
             grid_data = [["" for _ in range(8)] for _ in range(num_rows)]
-            col_width = w / 8
+            
+            # ပုံတစ်ပုံလုံးကို တစ်ကြိမ်တည်းဖတ်ပါ (Speed တိုးရန်)
+            results = reader.readtext(img_array)
+            
+            for (bbox, text, prob) in results:
+                # တည်နေရာကို ရာခိုင်နှုန်းဖြင့် တွက်ချက်ခြင်း (Scaling)
+                cx = np.mean([p[0] for p in bbox])
+                cy = np.mean([p[1] for p in bbox])
+                
+                # Column နှင့် Row index ကို တွက်ချက်ခြင်း
+                c_idx = int((cx / w) * num_cols)
+                r_idx = int((cy / h) * num_rows)
+                
+                if 0 <= r_idx < num_rows and 0 <= c_idx < 8:
+                    t = text.upper().strip()
+                    # စာလုံးအမှားများ ပြင်ဆင်ခြင်း
+                    t = t.replace('S', '5').replace('I', '1').replace('Z', '7').replace('B', '8').replace('G', '6').replace('O', '0')
+                    grid_data[r_idx][c_idx] = t
 
-            for c in range(8):
-                crop_img = img_array[0:h, int(c*col_width):int((c+1)*col_width)]
-                results = reader.readtext(crop_img)
-                for (bbox, text, prob) in results:
-                    cy = np.mean([p[1] for p in bbox])
-                    r_idx = int((cy / h) * num_rows)
-                    if 0 <= r_idx < num_rows:
-                        t = text.upper().strip()
-                        # Error correction for common handwriting mistakes
-                        t = t.replace('S', '5').replace('I', '1').replace('Z', '7').replace('B', '8').replace('G', '6').replace('O', '0')
-                        grid_data[r_idx][c] = t
-
-            # --- Ditto (။) & Clean Data ---
-            for c in range(8):
+            # --- Ditto & Summing Logic ---
+            for c in range(num_cols):
                 last_val = ""
                 for r in range(num_rows):
                     curr = grid_data[r][c]
@@ -94,27 +99,23 @@ if 'data_final' in st.session_state:
                 client = gspread.authorize(creds)
                 ss = client.open("LotteryData")
                 
-                # Sheet 1: Raw Data (အကွက်လိုက်သိမ်းဆည်းခြင်း)
+                # Sheet 1: Raw Data
                 sh1 = ss.get_worksheet(0)
-                sh1.clear() # အဟောင်းတွေကို ရှင်းချင်ရင် clear သုံးပါ
+                sh1.clear()
                 sh1.append_rows(edited_df)
                 
-                # --- ဂဏန်းများပေါင်းခြင်း Logic (Aggregation) ---
-                summary_dict = {} # { '123': total_amount }
-                
+                # Sheet 2: Aggregated Data
+                summary_dict = {}
                 pairs = [(0,1), (2,3), (4,5), (6,7)]
                 for row in edited_df:
                     for g_col, t_col in pairs:
                         if g_col < len(row) and t_col < len(row):
                             g_val = str(row[g_col]).strip()
                             t_val_raw = str(row[t_col]).strip()
-                            
-                            # ထိုးကြေးကို ဂဏန်းသက်သက်ဖြစ်အောင် ပြောင်းခြင်း
                             t_val_clean = re.sub(r'\D', '', t_val_raw)
                             t_amount = int(t_val_clean) if t_val_clean else 0
                             
                             if g_val:
-                                # R ပါလျှင် ဖြန့်ထုတ်ပြီး ပေါင်းမည်
                                 if 'R' in g_val.upper():
                                     for p in expand_r_sorted(g_val):
                                         summary_dict[p] = summary_dict.get(p, 0) + t_amount
@@ -124,17 +125,13 @@ if 'data_final' in st.session_state:
                                         num_key = clean_g[-3:].zfill(3)
                                         summary_dict[num_key] = summary_dict.get(num_key, 0) + t_amount
                 
-                # Sheet 2: ပေါင်းပြီးသား Data များပို့ခြင်း
                 sh2 = ss.get_worksheet(1)
-                sh2.clear() # Data အသစ်တွေပဲ မြင်ရအောင် ရှင်းပစ်ပါမည်
-                
-                # Dictionary ကို List ပြန်ပြောင်းပြီး Sort လုပ်ခြင်း
+                sh2.clear()
                 final_list = [[k, v] for k, v in summary_dict.items() if v > 0]
                 final_list.sort(key=lambda x: x[0])
-                
                 if final_list:
                     sh2.append_rows([["ဂဏန်း", "စုစုပေါင်းထိုးကြေး"]] + final_list)
                 
-                st.success(f"🎉 အောင်မြင်ပါသည်။ ဂဏန်းပေါင်း {len(final_list)} မျိုးကို ပေါင်းပြီး သိမ်းဆည်းလိုက်ပါပြီ။")
+                st.success(f"🎉 ပေါင်းပြီးသားဂဏန်း {len(final_list)} မျိုးကို Sheet ထဲ ပို့လိုက်ပါပြီ။")
             except Exception as e:
                 st.error(f"Sheet Error: {e}")
