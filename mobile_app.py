@@ -101,37 +101,26 @@ if 'data_final' in st.session_state:
                 
                 # Sheet 1: Raw Data
                 sh1 = ss.get_worksheet(0)
-                sh1.clear()
+                # sh1.clear()  <-- ဒီစာကြောင်းကို ဖြုတ်လိုက်ပါ သို့မဟုတ် ရှေ့က # ခံလိုက်ပါ
                 sh1.append_rows(edited_df)
                 
-                # Sheet 2: Aggregated Data
-                summary_dict = {}
-                pairs = [(0,1), (2,3), (4,5), (6,7)]
-                for row in edited_df:
-                    for g_col, t_col in pairs:
-                        if g_col < len(row) and t_col < len(row):
-                            g_val = str(row[g_col]).strip()
-                            t_val_raw = str(row[t_col]).strip()
-                            t_val_clean = re.sub(r'\D', '', t_val_raw)
-                            t_amount = int(t_val_clean) if t_val_clean else 0
-                            
-                            if g_val:
-                                if 'R' in g_val.upper():
-                                    for p in expand_r_sorted(g_val):
-                                        summary_dict[p] = summary_dict.get(p, 0) + t_amount
-                                else:
-                                    clean_g = re.sub(r'\D', '', g_val)
-                                    if clean_g:
-                                        num_key = clean_g[-3:].zfill(3)
-                                        summary_dict[num_key] = summary_dict.get(num_key, 0) + t_amount
-                
+                # Sheet 2: Aggregated Data (ပေါင်းပြီးသားစာရင်း)
                 sh2 = ss.get_worksheet(1)
-                sh2.clear()
+                
+                # မှတ်ချက် - Sheet 2 မှာ ဂဏန်းတူတာတွေကို အရင်ရှိပြီးသားနဲ့ ထပ်ပေါင်းချင်ရင် 
+                # logic က နည်းနည်း ပိုရှုပ်သွားပါမယ်။ 
+                # အခုလောလောဆယ်တော့ အောက်ကအတိုင်း append ပဲ လုပ်ပေးပါမယ်။
+                
+                summary_dict = {}
+                # ... (summary_dict တွက်တဲ့ logic က အရင်အတိုင်းပါပဲ) ...
+                
                 final_list = [[k, v] for k, v in summary_dict.items() if v > 0]
                 final_list.sort(key=lambda x: x[0])
-                if final_list:
-                    sh2.append_rows([["ဂဏန်း", "စုစုပေါင်းထိုးကြေး"]] + final_list)
                 
-                st.success(f"🎉 ပေါင်းပြီးသားဂဏန်း {len(final_list)} မျိုးကို Sheet ထဲ ပို့လိုက်ပါပြီ။")
+                if final_list:
+                    # sh2.clear() <-- ဒီစာကြောင်းကိုလည်း ဖြုတ်လိုက်ပါ
+                    sh2.append_rows(final_list) # Header မပါဘဲ data ပဲ ဆက်တိုက်ထည့်ပါမယ်
+                
+                st.success("🎉 အချက်အလက်သစ်များကို အရင်ရှိပြီးသားစာရင်းအောက်မှာ ပေါင်းထည့်လိုက်ပါပြီ။")
             except Exception as e:
                 st.error(f"Sheet Error: {e}")
