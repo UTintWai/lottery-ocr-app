@@ -35,7 +35,7 @@ def expand_r_sorted(text):
         return sorted(list(perms))
     return [digits.zfill(3)] if digits else []
 
-st.title("🎰 Lottery OCR (Full Logic & Sheet 2 Fix)")
+st.title("🎰 Lottery OCR (Fixed Sorting & Formatting)")
 
 with st.sidebar:
     st.header("⚙️ Settings")
@@ -53,93 +53,91 @@ if uploaded_file is not None:
     if st.button("🔍 အကုန်ဖတ်မည် (Fast Mode)"):
         with st.spinner(f"{num_cols} တိုင်စနစ်ဖြင့် ဖတ်နေပါသည်..."):
             h, w = img_array.shape[:2]
-            # 💡 ၈ တိုင်စလုံးအတွက် grid ကြိုဆောက်ထားပါမယ် (Spreadsheet သဏ္ဌာန်တူစေရန်)
             grid_data = [["" for _ in range(8)] for _ in range(num_rows)]
             
             results = reader.readtext(img_array)
-            
             for (bbox, text, prob) in results:
-                cx = np.mean([p[0] for p in bbox])
-                cy = np.mean([p[1] for p in bbox])
-                
-                # 💡 ရွေးထားတဲ့ Column အရေအတွက်ပေါ်မူတည်ပြီး အကွက်ရှာခြင်း
+                cx, cy = np.mean([p[0] for p in bbox]), np.mean([p[1] for p in bbox])
                 c_idx = int((cx / w) * num_cols)
                 r_idx = int((cy / h) * num_rows)
                 
                 if 0 <= r_idx < num_rows and 0 <= c_idx < 8:
                     t = text.upper().strip()
-                    # Handwriting Correction
                     t = t.replace('S', '5').replace('I', '1').replace('Z', '7').replace('B', '8').replace('G', '6').replace('O', '0')
                     grid_data[r_idx][c_idx] = t
 
-            # --- Ditto (။) Logic ---
+            # --- Validation & Ditto Logic ---
             for c in range(num_cols):
                 last_val = ""
                 for r in range(num_rows):
                     curr = str(grid_data[r][c])
                     is_ditto = any(s in curr for s in ["\"", "||", "11", "U", "''", "။", "〃", "=", "-"])
+                    
                     if (is_ditto or curr == "") and last_val != "":
                         grid_data[r][c] = last_val
                     elif curr != "":
-                        clean = re.sub(r'[^0-9Rr]', '', curr)
-                        if clean:
-                            grid_data[r][c] = clean
-                            last_val = clean
+                        # 💡 အတိုင် 1, 3, 5, 7 ဆိုလျှင် ဂဏန်း ၃ လုံး Format သွင်းခြင်း
+                        if c % 2 == 0:
+                            clean_g = re.sub(r'[^0-9Rr]', '', curr)
+                            if clean_g:
+                                grid_data[r][c] = clean_g
+                                last_val = clean_g
+                        # 💡 အတိုင် 2, 4, 6, 8 ဆိုလျှင် ထိုးကြေး Format (ဂဏန်းသက်သက်)
+                        else:
+                            clean_t = re.sub(r'\D', '', curr)
+                            grid_data[r][c] = clean_t
+                            last_val = clean_t
 
             st.session_state['data_final'] = grid_data
-            st.session_state['current_cols'] = num_cols
+            st.session_state['active_cols'] = num_cols
 
 if 'data_final' in st.session_state:
     st.subheader("📝 စစ်ဆေးပြီး ပြင်ဆင်ရန်")
-    edited_df = st.data_editor(st.session_state['data_final'], num_rows="dynamic", use_container_width=True)
+    edited_df = st.data_editor(st.session_state['data_final'], use_container_width=True)
 
     if st.button("✅ Google Sheet သို့ ပေါင်းပြီးပို့မည်"):
         if creds:
             try:
                 client = gspread.authorize(creds)
                 ss = client.open("LotteryData")
-                
-                # --- Sheet 1: Raw Data သိမ်းခြင်း ---
                 sh1 = ss.get_worksheet(0)
                 sh1.append_rows(edited_df)
                 
-                # --- Sheet 2: ထိုးကြေးပေါင်းခြင်း Logic (အပြည့်အစုံ) ---
-                summary_dict = {}
-                current_cols = st.session_state.get('current_cols', 8)
-                # (ဂဏန်း၊ ထိုးကြေး) အတွဲများကို ရှာဖွေခြင်း
-                pairs = [(i, i+1) for i in range(0, current_cols, 2)]
+                # --- Sheet 2: Global Aggregation & Sorting ---
+                sh2 = ss.get_worksheet(1)
+                existing_data = sh2.get_all_values()
+                
+                # အရင်ရှိပြီးသား data များကို dictionary ထဲ ထည့်ခြင်း
+                master_dict = {}
+                for row in existing_data:
+                    if len(row) >= 2:
+                        g, t = row[0], row[1]
+                        if g.isdigit():
+                            master_dict[g] = master_dict.get(g, 0) + int(t)
+
+                # အခုဖတ်လိုက်သော data အသစ်များကို ပေါင်းထည့်ခြင်း
+                active_cols = st.session_state.get('active_cols', 8)
+                pairs = [(i, i+1) for i in range(0, active_cols, 2)]
                 
                 for row in edited_df:
                     for g_col, t_col in pairs:
                         if g_col < len(row) and t_col < len(row):
-                            g_val = str(row[g_col]).strip()
-                            t_val_raw = str(row[t_col]).strip()
-                            
-                            # ထိုးကြေးကို ဂဏန်းသက်သက်ပြောင်း (ဥပမာ "24." -> 24)
-                            t_val_clean = re.sub(r'\D', '', t_val_raw)
-                            t_amount = int(t_val_clean) if t_val_clean else 0
-                            
+                            g_val, t_val = str(row[g_col]).strip(), str(row[t_col]).strip()
+                            amt = int(t_val) if t_val.isdigit() else 0
                             if g_val:
-                                # R ပါလျှင် ဖြန့်ထုတ်ပေါင်းမည်
                                 if 'R' in g_val.upper():
                                     for p in expand_r_sorted(g_val):
-                                        summary_dict[p] = summary_dict.get(p, 0) + t_amount
+                                        master_dict[p] = master_dict.get(p, 0) + amt
                                 else:
-                                    # ဂဏန်းသက်သက်ပဲယူပြီး ၃ လုံးစနစ်ပြောင်းမည်
-                                    clean_g = re.sub(r'\D', '', g_val)
-                                    if clean_g:
-                                        num_key = clean_g[-3:].zfill(3)
-                                        summary_dict[num_key] = summary_dict.get(num_key, 0) + t_amount
+                                    num = re.sub(r'\D', '', g_val)[-3:].zfill(3)
+                                    if num.isdigit():
+                                        master_dict[num] = master_dict.get(num, 0) + amt
+
+                # Dictionary ကို ငယ်စဉ်ကြီးလိုက် စီပြီး Sheet ထဲ ပြန်ထည့်ခြင်း
+                sorted_list = [[k, master_dict[k]] for k in sorted(master_dict.keys())]
+                sh2.clear()
+                sh2.append_rows([["ဂဏန်း", "စုစုပေါင်း"]] + sorted_list)
                 
-                # --- Sheet 2 ထဲသို့ ဒေတာသွင်းခြင်း ---
-                sh2 = ss.get_worksheet(1)
-                # Dictionary ကို List ပြောင်းပြီး ဂဏန်းအစဉ်လိုက် စီမည်
-                final_list = [[k, v] for k, v in summary_dict.items() if v > 0]
-                final_list.sort(key=lambda x: x[0])
-                
-                if final_list:
-                    sh2.append_rows(final_list)
-                
-                st.success(f"🎉 အောင်မြင်ပါသည်။ {len(final_list)} မျိုးကို Sheet 2 ထဲသို့ ပေါင်းထည့်လိုက်ပါပြီ။")
+                st.success("🎉 ဒေတာများကို ပေါင်းပြီး ငယ်စဉ်ကြီးလိုက် စီပြီးပါပြီ။")
             except Exception as e:
                 st.error(f"Sheet Error: {e}")
