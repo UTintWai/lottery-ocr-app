@@ -81,32 +81,41 @@ if uploaded_file:
             # OCR ဖတ်ပြီးနောက် Ditto နဲ့ Formatting လုပ်တဲ့နေရာမှာ ဒါလေး အစားထိုးပါ
 
             # Formatting & Strict Filtering Logic
-            for c in range(num_cols_active):
-                last_val = ""
-                for r in range(num_rows):
-                    curr = str(grid_data[r][c]).strip().upper()
-                    
-                    # ၁။ ဂဏန်းတိုင်များအတွက် (A, C, E, G တိုင်များ)
-                    if c % 2 == 0:
-                        # ဂဏန်း နှင့် R ကလွဲရင် ကျန်တာအကုန်ဖြုတ် (EABLY, KEX တို့ ပျောက်သွားမည်)
-                        curr = re.sub(r'[^0-9R]', '', curr)
-                        if curr:
-                            # ဂဏန်းသက်သက်ဆိုလျှင် ၃ လုံး Format ပြောင်း၊ R ပါလျှင် ဒီအတိုင်းထား
-                            if curr.isdigit():
-                                curr = curr[-3:].zfill(3)
-                    
-                    # ၂။ ထိုးကြေးတိုင်များအတွက် (B, D, F, H တိုင်များ)
-                    else:
-                        # ဂဏန်းသက်သက်ပဲ ချန်မည် (CO, 2E1E တို့မှ ဂဏန်းပဲယူမည်)
-                        curr = re.sub(r'\D', '', curr)
+            # --- OCR Result Formatting & Strict Filtering ---
+for c in range(num_cols_active):
+    last_val = ""
+    for r in range(num_rows):
+        curr = str(grid_data[r][c]).strip().upper()
 
-                    # ၃။ Ditto Logic (။, ", |, U တို့တွေ့ရင် အပေါ်ကတန်ဖိုးယူ)
-                    is_ditto = any(s in curr for s in ["\"", "||", "။", "=", "U", "V"])
-                    if (is_ditto or curr == "") and last_val != "":
-                        grid_data[r][c] = last_val
+        # ၁။ ဂဏန်းတိုင်များ (A, C, E, G)
+        if c % 2 == 0:
+            # OCR error correction
+            curr = curr.replace('S','5').replace('I','1').replace('Z','7').replace('G','6')
+            # ဂဏန်း + R ကိုသာ ချန်
+            curr = re.sub(r'[^0-9R]', '', curr)
+            if curr:
+                if curr.isdigit():
+                    # အဆုံး ၃ လုံးကိုသာယူ
+                    m = re.search(r'(\d{3})$', curr)
+                    if m:
+                        curr = m.group(1)
                     else:
-                        grid_data[r][c] = curr
-                        if curr: last_val = curr
+                        curr = curr[-3:].zfill(3)
+                # R ပါရင် 그대로 ချန်
+        else:
+            # ၂။ ထိုးကြေးတိုင်များ (B, D, F, H)
+            # digit group အကုန်ယူပြီး အကြီးဆုံးကို ချန်
+            nums = re.findall(r'\d+', curr)
+            curr = max(nums, key=lambda x: int(x)) if nums else ""
+
+        # ၃။ Ditto Logic
+        if any(s in curr for s in ['"', '〃', "'", "||", "။", "=", "U", "V"]) or curr == "":
+            if last_val:
+                grid_data[r][c] = last_val
+        else:
+            grid_data[r][c] = curr
+            last_val = curr
+
             st.session_state['data_final'] = grid_data
 
 # --- ၆။ Google Sheets Upload Section ---
