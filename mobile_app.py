@@ -84,10 +84,10 @@ if uploaded_file:
     st.image(img, channels="BGR", use_container_width=True)
 
     if st.button("🔍 စစ်ဆေးမည် (OCR Scan)"):
-        with st.spinner("ဖတ်နေပါသည်..."):
-            h, w = img.shape[:2]
-            grid_data = [["" for _ in range(8)] for _ in range(num_rows)]
-            results = reader.readtext(img)
+     with st.spinner("ဖတ်နေပါသည်..."):
+        h, w = img.shape[:2]
+        grid_data = [["" for _ in range(8)] for _ in range(num_rows)]
+        results = reader.readtext(img)
 
         for (bbox, text, prob) in results:
             cx, cy = np.mean([p[0] for p in bbox]), np.mean([p[1] for p in bbox])
@@ -104,23 +104,28 @@ if uploaded_file:
             for r in range(num_rows):
                 curr = str(grid_data[r][c]).strip().upper()
 
-                # Ditto Logic (inherit from above if blank or single digit in amount columns)
-if c % 2 == 1:  # amount columns
-    if (curr == "" or (curr.isdigit() and len(curr) <= 2)) and last_val:
-        grid_data[r][c] = last_val
-    else:
-        grid_data[r][c] = curr
-        if curr:
-            last_val = curr
-else:  # number columns
-    if curr == "" and last_val:
-        grid_data[r][c] = last_val
-    else:
-        grid_data[r][c] = curr
-        if curr:
-            last_val = curr
+                if c % 2 == 0:  # number columns
+                    curr = curr.replace('S','5').replace('I','1').replace('Z','7').replace('G','6')
+                    curr = re.sub(r'[^0-9R]', '', curr)
+                    if curr:
+                        if curr.isdigit():
+                            m = re.search(r'(\d{3})$', curr)
+                            if m:
+                                curr = m.group(1)
+                            else:
+                                curr = curr[-3:].zfill(3)
+                else:  # amount columns
+                    nums = re.findall(r'\d+', curr)
+                    curr = max(nums, key=lambda x: int(x)) if nums else ""
 
-        # loop အပြီးမှာ data_final ကို assign
+                # Ditto logic
+                if (curr == "" or (curr.isdigit() and len(curr) <= 2)) and last_val:
+                    grid_data[r][c] = last_val
+                else:
+                    grid_data[r][c] = curr
+                    if curr:
+                        last_val = curr
+
         st.session_state['data_final'] = grid_data
 
 # --- ၆။ Google Sheets Upload Section ---
