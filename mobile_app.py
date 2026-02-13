@@ -8,32 +8,26 @@ import gspread
 from itertools import permutations
 from oauth2client.service_account import ServiceAccountCredentials
 
-# --- Configuration ---
+# --- ၁။ Page Configuration ---
 st.set_page_config(page_title="Lottery Pro 2026", layout="wide")
 
+# --- ၂။ OCR Model Loading ---
 @st.cache_resource
 def load_ocr():
     return easyocr.Reader(['en'], gpu=False)
 
 reader = load_ocr()
 
-# --- Betting Logic: R-Permutation Split ---
+# --- ၃။ Betting Logic (R-System) ---
 def get_all_permutations(num_str):
-    """ဂဏန်းတစ်ခု၏ ဖြစ်နိုင်သမျှ ပတ်လည် အားလုံးကို ရှာခြင်း (မူရင်းအပါအဝင်)"""
     num_only = re.sub(r'\D', '', num_str)
     if len(num_only) != 3: return [num_only] if num_only else []
-    perms = sorted(list(set([''.join(p) for p in permutations(num_only)])))
-    return perms
+    return sorted(list(set([''.join(p) for p in permutations(num_only)])))
 
 def process_bet_logic(num_txt, amt_txt):
-    """
-    R ပါသော ဂဏန်းများနှင့် ထိုးကြေးများကို ခွဲဝေခြင်း
-    ဥပမာ: 267R, 360 -> {'267':60, '276':60, ...}
-    """
-    clean_num = re.sub(r'[^0-9R]', '', num_txt.upper())
-    clean_amt = re.sub(r'\D', '', amt_txt)
+    clean_num = re.sub(r'[^0-9R]', '', str(num_txt).upper())
+    clean_amt = re.sub(r'\D', '', str(amt_txt))
     amt = int(clean_amt) if clean_amt else 0
-    
     results = {}
     
     if 'R' in clean_num:
@@ -44,22 +38,22 @@ def process_bet_logic(num_txt, amt_txt):
             for p in perms:
                 results[p] = split_amt
     else:
-        # R မပါရင် ပုံမှန်အတိုင်းပဲ ပေါင်းမယ်
-        if clean_num.isdigit():
-            results[clean_num.zfill(3)] = amt
-            
+        num_final = clean_num.zfill(3) if (clean_num.isdigit() and len(clean_num) <= 3) else clean_num
+        if num_final:
+            results[num_final] = amt
     return results
 
-# --- Sidebar ---
+# --- ၄။ Sidebar Settings ---
 with st.sidebar:
     st.header("⚙️ Settings")
     num_rows = st.number_input("အတန်းအရေအတွက်", min_value=1, value=50)
     col_mode = st.selectbox("အတိုင်အရေအတွက်", ["၂ တိုင်", "၄ တိုင်", "၆ တိုင်", "၈ တိုင်"], index=3)
-    num_cols = int(col_mode.split()[0])
+    num_cols_active = int(col_mode.split()[0])
     st.divider()
-    st.info("Logic: 267R-360 ဆိုလျှင် ၆ ကွက်အား ၆၀ စီ ခွဲဝေပေးမည်။")
+    st.info("Logic: 267R-360 ဆိုလျှင် ပတ်လည် ၆ ကွက်ကို ၆၀ စီ ခွဲဝေပေးပါမည်။")
 
-st.title("🎰 Lottery OCR: R-System Enabled")
+# --- ၅။ Main UI ---
+st.title("🎰 Lottery OCR (Fixed Sheet Upload)")
 
 uploaded_file = st.file_uploader("📥 လက်ရေးမူပုံတင်ရန်", type=["jpg", "jpeg", "png"])
 
@@ -68,7 +62,7 @@ if uploaded_file:
     img = cv2.imdecode(file_bytes, 1)
     st.image(img, channels="BGR", use_container_width=True)
 
-    if st.button("🔍 စာဖတ်မည်"):
+    if st.button("🔍 စာဖတ်မည် (OCR Scan)"):
         with st.spinner("ဖတ်နေပါသည်..."):
             h, w = img.shape[:2]
             grid_data = [["" for _ in range(8)] for _ in range(num_rows)]
@@ -76,17 +70,15 @@ if uploaded_file:
             
             for (bbox, text, prob) in results:
                 cx, cy = np.mean([p[0] for p in bbox]), np.mean([p[1] for p in bbox])
-                c_idx, r_idx = int((cx/w)*num_cols), int((cy/h)*num_rows)
+                c_idx = int((cx / w) * num_cols_active)
+                r_idx = int((cy / h) * num_rows)
                 
                 if 0 <= r_idx < num_rows and 0 <= c_idx < 8:
                     txt = text.upper().strip().replace('S','5').replace('I','1').replace('Z','7').replace('G','6')
-                    # ဂဏန်းတိုင်ဖြစ်ပါက R ကလွဲပြီး အင်္ဂလိပ်စာလုံးများ ဖယ်ရှားမည်
-                    if c_idx % 2 == 0:
-                        txt = re.sub(r'[^0-9R]', '', txt)
                     grid_data[r_idx][c_idx] = txt
 
-            # Formatting & Ditto Logic
-            for c in range(num_cols):
+            # Ditto & Formatting
+            for c in range(num_cols_active):
                 last_val = ""
                 for r in range(num_rows):
                     curr = str(grid_data[r][c]).strip()
@@ -94,47 +86,61 @@ if uploaded_file:
                         grid_data[r][c] = last_val
                     elif curr != "":
                         last_val = curr
-            
             st.session_state['data_final'] = grid_data
 
+# --- ၆။ Google Sheets Upload Section ---
 if 'data_final' in st.session_state:
-    st.subheader("📝 စစ်ဆေးပြင်ဆင်ရန် (ဥပမာ- 267R)")
+    st.subheader("📝 စစ်ဆေးပြီး Google Sheet သို့ ပို့ရန်")
     edited_data = st.data_editor(st.session_state['data_final'], use_container_width=True)
 
-    if st.button("🚀 Google Sheets သို့ ခွဲဝေပို့ဆောင်မည်"):
-        # (Google Sheets Connection Logic here...)
+    if st.button("🚀 Google Sheet သို့ အကုန်ပို့မည်"):
         try:
-            client = get_gspread_client() # type: ignore
+            # Credentials Connection
+            secret_info = json.loads(st.secrets["GCP_SERVICE_ACCOUNT_FILE"])
+            secret_info["private_key"] = secret_info["private_key"].replace("\\n", "\n")
+            scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
+            creds = ServiceAccountCredentials.from_json_keyfile_dict(secret_info, scope)
+            client = gspread.authorize(creds)
+            
+            # Open Spreadsheet
             ss = client.open("LotteryData")
-            sh1, sh2, sh3 = ss.get_worksheet(0), ss.get_worksheet(1), ss.get_worksheet(2)
-            
-            sh1.append_rows(edited_data) # Raw save
-            
+            sh1 = ss.get_worksheet(0) # Raw Data
+            sh2 = ss.get_worksheet(1) # Sum Data
+            try: sh3 = ss.get_worksheet(2)
+            except: sh3 = ss.add_worksheet(title="Sheet3", rows="100", cols="5")
+
+            # --- Sheet 1: Append Edited Data ---
+            sh1.append_rows(edited_data)
+
+            # --- Sheet 2 & 3 Processing ---
             master_sum = {}
             voucher_list = []
 
             for row in edited_data:
                 for i in range(0, 8, 2):
-                    n_txt, a_txt = str(row[i]), str(row[i+1])
+                    n_txt, a_txt = str(row[i]).strip(), str(row[i+1]).strip()
                     if n_txt and a_txt:
-                        # R logic ဖြင့် ခွဲဝေခြင်း
-                        bet_results = process_bet_logic(n_txt, a_txt)
-                        for g, val in bet_results.items():
+                        # R Logic ခွဲဝေခြင်း
+                        bet_res = process_bet_logic(n_txt, a_txt)
+                        for g, val in bet_res.items():
                             master_sum[g] = master_sum.get(g, 0) + val
                         
-                        # Sheet 3 ပိုငွေအတွက် (မူရင်းထိုးကြေး ၃၀၀၀ ကျော်လျှင်)
+                        # Sheet 3 (ပိုငွေ ၃၀၀၀ ကျော်လျှင်)
                         amt_num = int(re.sub(r'\D', '', a_txt)) if re.sub(r'\D', '', a_txt) else 0
                         if amt_num > 3000:
                             voucher_list.append([n_txt, amt_num - 3000, "ပိုငွေ"])
 
-            # Sheet 2 Update (Sorted)
+            # --- Sheet 2: Clear and Update with Sorted Sum ---
             sh2.clear()
             final_list = [[k, master_sum[k]] for k in sorted(master_sum.keys())]
             sh2.append_rows([["ဂဏန်း", "စုစုပေါင်း"]] + final_list)
             
-            # Sheet 3 Update
-            if voucher_list: sh3.append_rows(voucher_list)
+            # --- Sheet 3: Update ---
+            if voucher_list:
+                sh3.append_rows(voucher_list)
             
-            st.success("🎉 R-System ဖြင့် အောင်မြင်စွာ ပေါင်းစည်းပြီးပါပြီ!")
+            st.success("🎉 Sheet 1, 2 နှင့် 3 သို့ အချက်အလက်များ အောင်မြင်စွာ ပို့ပြီးပါပြီ!")
+            
         except Exception as e:
-            st.error(f"Error: {e}")
+            st.error(f"❌ Error: {e}")
+            st.write("အကယ်၍ Spreadsheet အမည် မမှန်ကန်ပါက 'LotteryData' ဖြစ်အောင် ပြင်ပေးပါဗျ။")
