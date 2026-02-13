@@ -26,21 +26,42 @@ def get_all_permutations(num_str):
 
 def process_bet_logic(num_txt, amt_txt):
     clean_num = re.sub(r'[^0-9R]', '', str(num_txt).upper())
-    clean_amt = re.sub(r'\D', '', str(amt_txt))
-    amt = int(clean_amt) if clean_amt else 0
+    amt_str = str(amt_txt).upper().replace('X','*')
     results = {}
-    
+
+    # Case 1: R-system
     if 'R' in clean_num:
         base_num = clean_num.replace('R', '')
         perms = get_all_permutations(base_num)
+        amt = int(re.sub(r'\D','',amt_str)) if re.sub(r'\D','',amt_str) else 0
         if perms and amt > 0:
             split_amt = amt // len(perms)
             for p in perms:
                 results[p] = split_amt
+
+    # Case 2: Multiplier expression (e.g. 1500*1000, 50*50)
+    elif '*' in amt_str:
+        parts = amt_str.split('*')
+        if len(parts) == 2 and parts[0].isdigit() and parts[1].isdigit():
+            base_amt = int(parts[0])
+            total_amt = int(parts[1])
+            # base number
+            num_final = clean_num.zfill(3)
+            results[num_final] = base_amt
+            # remaining permutations
+            perms = [p for p in get_all_permutations(num_final) if p != num_final]
+            if perms:
+                split_amt = (total_amt - base_amt) // len(perms)
+                for p in perms:
+                    results[p] = split_amt
+
+    # Case 3: Normal digit amount
     else:
+        amt = int(re.sub(r'\D','',amt_str)) if re.sub(r'\D','',amt_str) else 0
         num_final = clean_num.zfill(3) if (clean_num.isdigit() and len(clean_num) <= 3) else clean_num
         if num_final:
             results[num_final] = amt
+
     return results
 
 # --- ၄။ Sidebar Settings ---
@@ -83,26 +104,21 @@ if uploaded_file:
             for r in range(num_rows):
                 curr = str(grid_data[r][c]).strip().upper()
 
-                if c % 2 == 0:
-                    curr = curr.replace('S','5').replace('I','1').replace('Z','7').replace('G','6')
-                    curr = re.sub(r'[^0-9R]', '', curr)
-                    if curr:
-                        if curr.isdigit():
-                            m = re.search(r'(\d{3})$', curr)
-                            if m:
-                                curr = m.group(1)
-                            else:
-                                curr = curr[-3:].zfill(3)
-                else:
-                    nums = re.findall(r'\d+', curr)
-                    curr = max(nums, key=lambda x: int(x)) if nums else ""
-
-                if any(s in curr for s in ['"', '〃', "'", "||", "။", "=", "U", "V"]) or curr == "":
-                    if last_val:
-                        grid_data[r][c] = last_val
-                else:
-                    grid_data[r][c] = curr
-                    last_val = curr
+                # Ditto Logic (inherit from above if blank or single digit in amount columns)
+if c % 2 == 1:  # amount columns
+    if (curr == "" or (curr.isdigit() and len(curr) <= 2)) and last_val:
+        grid_data[r][c] = last_val
+    else:
+        grid_data[r][c] = curr
+        if curr:
+            last_val = curr
+else:  # number columns
+    if curr == "" and last_val:
+        grid_data[r][c] = last_val
+    else:
+        grid_data[r][c] = curr
+        if curr:
+            last_val = curr
 
         # loop အပြီးမှာ data_final ကို assign
         st.session_state['data_final'] = grid_data
