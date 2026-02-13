@@ -81,46 +81,32 @@ if uploaded_file:
             # OCR ဖတ်ပြီးနောက် Ditto နဲ့ Formatting လုပ်တဲ့နေရာမှာ ဒါလေး အစားထိုးပါ
 
             # Formatting & Strict Filtering Logic
-            # --- Formatting & Strict Filtering Logic Update ---
-
             for c in range(num_cols_active):
-                last_num_val = ""   # ဂဏန်းတိုင်အတွက် အပေါ်ကတန်ဖိုး
-                last_amt_val = ""   # ထိုးကြေးတိုင်အတွက် အပေါ်ကတန်ဖိုး
-                
+                last_val = ""
                 for r in range(num_rows):
                     curr = str(grid_data[r][c]).strip().upper()
                     
-                    # ၁။ ဂဏန်းတိုင်များအတွက် (Column 0, 2, 4, 6)
+                    # ၁။ ဂဏန်းတိုင်များအတွက် (A, C, E, G တိုင်များ)
                     if c % 2 == 0:
-                        curr_clean = re.sub(r'[^0-9R]', '', curr)
-                        
-                        # Ditto သင်္ကေတ စစ်ဆေးခြင်း
-                        is_num_ditto = any(s in curr for s in ["\"", "||", "။", "=", "U", "V"])
-                        
-                        if (is_num_ditto or curr_clean == "") and last_num_val != "":
-                            grid_data[r][c] = last_num_val
-                        else:
-                            if curr_clean.isdigit():
-                                # ဂဏန်းကို အမြဲ ၃ လုံးဖြစ်အောင် ရှေ့က 0 ဖြည့် (ဥပမာ 12 ကို 012)
-                                curr_clean = curr_clean[-3:].zfill(3)
-                            grid_data[r][c] = curr_clean
-                            if curr_clean: last_num_val = curr_clean
+                        # ဂဏန်း နှင့် R ကလွဲရင် ကျန်တာအကုန်ဖြုတ် (EABLY, KEX တို့ ပျောက်သွားမည်)
+                        curr = re.sub(r'[^0-9R]', '', curr)
+                        if curr:
+                            # ဂဏန်းသက်သက်ဆိုလျှင် ၃ လုံး Format ပြောင်း၊ R ပါလျှင် ဒီအတိုင်းထား
+                            if curr.isdigit():
+                                curr = curr[-3:].zfill(3)
                     
-                    # ၂။ ထိုးကြေးတိုင်များအတွက် (Column 1, 3, 5, 7)
+                    # ၂။ ထိုးကြေးတိုင်များအတွက် (B, D, F, H တိုင်များ)
                     else:
-                        amt_clean = re.sub(r'\D', '', curr)
-                        
-                        # ထိုးကြေးတိုင်မှာ "။" အစစ်အမှန် ပါမှသာ အပေါ်ကတန်ဖိုးကို ကူးမည်
-                        is_amt_ditto = any(s in curr for s in ["\"", "။", "〃"])
-                        
-                        if is_amt_ditto and last_amt_val != "":
-                            grid_data[r][c] = last_amt_val
-                        else:
-                            # အကယ်၍ OCR က လုံးဝမဖတ်မိရင် (Empty ဖြစ်နေရင်)
-                            # ထိုးကြေးတိုင်မှာ အပေါ်ကအတိုင်း လိုက်မကူးစေချင်တဲ့အတွက် အလွတ်ပဲထားပါမယ်
-                            grid_data[r][c] = amt_clean
-                            if amt_clean: last_amt_val = amt_clean
+                        # ဂဏန်းသက်သက်ပဲ ချန်မည် (CO, 2E1E တို့မှ ဂဏန်းပဲယူမည်)
+                        curr = re.sub(r'\D', '', curr)
 
+                    # ၃။ Ditto Logic (။, ", |, U တို့တွေ့ရင် အပေါ်ကတန်ဖိုးယူ)
+                    is_ditto = any(s in curr for s in ["\"", "||", "။", "=", "U", "V"])
+                    if (is_ditto or curr == "") and last_val != "":
+                        grid_data[r][c] = last_val
+                    else:
+                        grid_data[r][c] = curr
+                        if curr: last_val = curr
             st.session_state['data_final'] = grid_data
 
 # --- ၆။ Google Sheets Upload Section ---
