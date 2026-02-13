@@ -62,61 +62,50 @@ if uploaded_file:
     img = cv2.imdecode(file_bytes, 1)
     st.image(img, channels="BGR", use_container_width=True)
 
-    if st.button("🔍 စာဖတ်မည် (OCR Scan)"):
+    if st.button("🔍 စစ်ဆေးမည် (OCR Scan)"):
         with st.spinner("ဖတ်နေပါသည်..."):
             h, w = img.shape[:2]
             grid_data = [["" for _ in range(8)] for _ in range(num_rows)]
             results = reader.readtext(img)
-            
-            for (bbox, text, prob) in results:
-                cx, cy = np.mean([p[0] for p in bbox]), np.mean([p[1] for p in bbox])
-                c_idx = int((cx / w) * num_cols_active)
-                r_idx = int((cy / h) * num_rows)
-                
-                if 0 <= r_idx < num_rows and 0 <= c_idx < 8:
-                    txt = text.upper().strip().replace('S','5').replace('I','1').replace('Z','7').replace('G','6')
-                    grid_data[r_idx][c_idx] = txt
 
-            # Ditto & Formatting
-            # OCR ဖတ်ပြီးနောက် Ditto နဲ့ Formatting လုပ်တဲ့နေရာမှာ ဒါလေး အစားထိုးပါ
+        for (bbox, text, prob) in results:
+            cx, cy = np.mean([p[0] for p in bbox]), np.mean([p[1] for p in bbox])
+            c_idx = int((cx / w) * num_cols_active)
+            r_idx = int((cy / h) * num_rows)
 
-            # Formatting & Strict Filtering Logic
-            # --- OCR Result Formatting & Strict Filtering ---
-for c in range(num_cols_active):
-    last_val = ""
-    for r in range(num_rows):
-        curr = str(grid_data[r][c]).strip().upper()
+            if 0 <= r_idx < num_rows and 0 <= c_idx < 8:
+                txt = text.upper().strip().replace('S','5').replace('I','1').replace('Z','7').replace('G','6')
+                grid_data[r_idx][c_idx] = txt
 
-        # ၁။ ဂဏန်းတိုင်များ (A, C, E, G)
-        if c % 2 == 0:
-            # OCR error correction
-            curr = curr.replace('S','5').replace('I','1').replace('Z','7').replace('G','6')
-            # ဂဏန်း + R ကိုသာ ချန်
-            curr = re.sub(r'[^0-9R]', '', curr)
-            if curr:
-                if curr.isdigit():
-                    # အဆုံး ၃ လုံးကိုသာယူ
-                    m = re.search(r'(\d{3})$', curr)
-                    if m:
-                        curr = m.group(1)
-                    else:
-                        curr = curr[-3:].zfill(3)
-                # R ပါရင် 그대로 ချန်
-        else:
-            # ၂။ ထိုးကြေးတိုင်များ (B, D, F, H)
-            # digit group အကုန်ယူပြီး အကြီးဆုံးကို ချန်
-            nums = re.findall(r'\d+', curr)
-            curr = max(nums, key=lambda x: int(x)) if nums else ""
+        # --- OCR Result Formatting & Strict Filtering ---
+        for c in range(num_cols_active):
+            last_val = ""
+            for r in range(num_rows):
+                curr = str(grid_data[r][c]).strip().upper()
 
-        # ၃။ Ditto Logic
-        if any(s in curr for s in ['"', '〃', "'", "||", "။", "=", "U", "V"]) or curr == "":
-            if last_val:
-                grid_data[r][c] = last_val
-        else:
-            grid_data[r][c] = curr
-            last_val = curr
+                if c % 2 == 0:
+                    curr = curr.replace('S','5').replace('I','1').replace('Z','7').replace('G','6')
+                    curr = re.sub(r'[^0-9R]', '', curr)
+                    if curr:
+                        if curr.isdigit():
+                            m = re.search(r'(\d{3})$', curr)
+                            if m:
+                                curr = m.group(1)
+                            else:
+                                curr = curr[-3:].zfill(3)
+                else:
+                    nums = re.findall(r'\d+', curr)
+                    curr = max(nums, key=lambda x: int(x)) if nums else ""
 
-            st.session_state['data_final'] = grid_data
+                if any(s in curr for s in ['"', '〃', "'", "||", "။", "=", "U", "V"]) or curr == "":
+                    if last_val:
+                        grid_data[r][c] = last_val
+                else:
+                    grid_data[r][c] = curr
+                    last_val = curr
+
+        # loop အပြီးမှာ data_final ကို assign
+        st.session_state['data_final'] = grid_data
 
 # --- ၆။ Google Sheets Upload Section ---
 if 'data_final' in st.session_state:
