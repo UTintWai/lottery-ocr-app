@@ -78,14 +78,35 @@ if uploaded_file:
                     grid_data[r_idx][c_idx] = txt
 
             # Ditto & Formatting
+            # OCR ဖတ်ပြီးနောက် Ditto နဲ့ Formatting လုပ်တဲ့နေရာမှာ ဒါလေး အစားထိုးပါ
+
+            # Formatting & Strict Filtering Logic
             for c in range(num_cols_active):
                 last_val = ""
                 for r in range(num_rows):
-                    curr = str(grid_data[r][c]).strip()
-                    if curr in ["", "။", "\"", "||", "="] and last_val != "":
+                    curr = str(grid_data[r][c]).strip().upper()
+                    
+                    # ၁။ ဂဏန်းတိုင်များအတွက် (A, C, E, G တိုင်များ)
+                    if c % 2 == 0:
+                        # ဂဏန်း နှင့် R ကလွဲရင် ကျန်တာအကုန်ဖြုတ် (EABLY, KEX တို့ ပျောက်သွားမည်)
+                        curr = re.sub(r'[^0-9R]', '', curr)
+                        if curr:
+                            # ဂဏန်းသက်သက်ဆိုလျှင် ၃ လုံး Format ပြောင်း၊ R ပါလျှင် ဒီအတိုင်းထား
+                            if curr.isdigit():
+                                curr = curr[-3:].zfill(3)
+                    
+                    # ၂။ ထိုးကြေးတိုင်များအတွက် (B, D, F, H တိုင်များ)
+                    else:
+                        # ဂဏန်းသက်သက်ပဲ ချန်မည် (CO, 2E1E တို့မှ ဂဏန်းပဲယူမည်)
+                        curr = re.sub(r'\D', '', curr)
+
+                    # ၃။ Ditto Logic (။, ", |, U တို့တွေ့ရင် အပေါ်ကတန်ဖိုးယူ)
+                    is_ditto = any(s in curr for s in ["\"", "||", "။", "=", "U", "V"])
+                    if (is_ditto or curr == "") and last_val != "":
                         grid_data[r][c] = last_val
-                    elif curr != "":
-                        last_val = curr
+                    else:
+                        grid_data[r][c] = curr
+                        if curr: last_val = curr
             st.session_state['data_final'] = grid_data
 
 # --- ၆။ Google Sheets Upload Section ---
