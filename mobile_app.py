@@ -27,46 +27,49 @@ def get_all_permutations(num_str):
     return sorted(list(set([''.join(p) for p in permutations(num_only)])))
 
 # ---------------- ၄။ BETTING LOGIC (R စနစ်နှင့် မြှောက်လဒ်စနစ်) ----------------
-def process_bet_logic(num_txt, amt_txt):
-    clean_num = re.sub(r'[^0-9R]', '', str(num_txt).upper())
-    amt_str = str(amt_txt).upper().replace('X', '*')
-    results = {}
+def process_ocr_results(results, h, w, num_rows, num_cols_active):
+    grid_data = [["" for _ in range(8)] for _ in range(num_rows)]
+    
+    # ၁။ OCR ကရတဲ့ စာသားတွေကို သက်ဆိုင်ရာ အကွက်ထဲ အရင်ထည့်မယ်
+    for (bbox, text, prob) in results:
+        # Bounding box ရဲ့ အလယ်ဗဟိုကို တွက်ချက်
+        cx = np.mean([p[0] for p in bbox])
+        cy = np.mean([p[1] for p in bbox])
+        
+        # Grid index ကို ပိုမိုတိကျအောင် တွက်ချက်
+        c_idx = int((cx / w) * num_cols_active)
+        r_idx = int((cy / h) * num_rows)
 
-    try:
-        # Case 1: R-system (ဥပမာ- 267R-300)
-        if 'R' in clean_num:
-            base = clean_num.replace('R', '')
-            perms = get_all_permutations(base)
-            amt = int(re.sub(r'\D', '', amt_str)) if re.sub(r'\D', '', amt_str) else 0
-            if perms and amt > 0:
-                split = amt // len(perms)
-                for p in perms:
-                    results[p] = split
+        if 0 <= r_idx < num_rows and 0 <= c_idx < 8:
+            # စာလုံးအမှားပြင်ဆင်ခြင်း (ဥပမာ- 'g' ကို '6', 's' ကို '5')
+            cleaned_text = text.upper().strip()
+            replacements = {'S': '5', 'G': '6', 'I': '1', 'Z': '7', 'B': '8', 'O': '0', 'L': '1'}
+            for k, v in replacements.items():
+                cleaned_text = cleaned_text.replace(k, v)
+            grid_data[r_idx][c_idx] = cleaned_text
 
-        # Case 2: Multiplier (ဥပမာ- 50*50)
-        elif '*' in amt_str:
-            parts = amt_str.split('*')
-            if len(parts) == 2 and parts[0].strip().isdigit() and parts[1].strip().isdigit():
-                base_amt = int(parts[0])
-                total_amt = int(parts[1])
-                num_final = clean_num.zfill(3)
-                results[num_final] = base_amt
-                perms = [p for p in get_all_permutations(num_final) if p != num_final]
-                if perms:
-                    split = (total_amt - base_amt) // len(perms)
-                    for p in perms:
-                        results[p] = split
-
-        # Case 3: Normal Digit
-        else:
-            amt = int(re.sub(r'\D', '', amt_str)) if re.sub(r'\D', '', amt_str) else 0
-            num_final = clean_num.zfill(3) if (clean_num.isdigit() and len(clean_num) <= 3) else clean_num
-            if num_final:
-                results[num_final] = amt
-    except:
-        pass
-
-    return results
+    # ၂။ Ditto logic (အောက်က အတူတူပဲဆိုတဲ့ သင်္ကေတ) ကို ကိုင်တွယ်ခြင်း
+    for c in range(num_cols_active):
+        last_valid_val = ""
+        for r in range(num_rows):
+            curr = grid_data[r][c].strip()
+            
+            # အကယ်၍ အကွက်က လွတ်နေရင် သို့မဟုတ် " (ditto) သင်္ကေတနဲ့ တူတာတွေ့ရင်
+            # လက်ရေးမှာ "4" လိုမျိုး ရေးတတ်တဲ့အတွက် အက္ခရာ/ဂဏန်း မဟုတ်တာတွေကို စစ်ဆေး
+            is_ditto = curr in ['"', '""', "''", "4", "ll", "y"] or (not curr.isalnum() and curr != "")
+            
+            if (curr == "" or is_ditto) and last_valid_val != "":
+                grid_data[r][c] = last_valid_val
+            elif curr != "":
+                # ဂဏန်းအတိုင်ဖြစ်ရင် ၃ လုံးပဲ ယူမယ်
+                if c % 2 == 0: 
+                    nums_only = re.sub(r'[^0-9R]', '', curr)
+                    grid_data[r][c] = nums_only
+                else:
+                    grid_data[r][c] = curr
+                last_valid_val = grid_data[r][c]
+                
+    return grid_data
 
 # ---------------- ၅။ SIDEBAR SETTINGS ----------------
 with st.sidebar:
@@ -179,7 +182,7 @@ if 'data_final' in st.session_state:
                     n_txt = str(row[i]).strip()
                     a_txt = str(row[i+1]).strip()
                     if n_txt and a_txt:
-                        bet_res = process_bet_logic(n_txt, a_txt)
+                        bet_res = process_ocr_results(n_txt, a_txt)
                         for g, val in bet_res.items():
                             master_sum[g] = master_sum.get(g, 0) + val
 
