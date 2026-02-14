@@ -123,6 +123,7 @@ if uploaded_file:
 
             # ----------- STRICT CLEANING -----------
             # --- OCR Result Formatting & Strict Filtering ---
+# --- OCR Result Formatting & Strict Filtering ---
 for c in range(num_cols_active):
     last_val = ""
     for r in range(num_rows):
@@ -152,7 +153,6 @@ for c in range(num_cols_active):
 
 # loop အပြီးမှာ assign
 st.session_state['data_final'] = grid_data
-
 
 # ---------------- GOOGLE SHEET ----------------
 if 'data_final' in st.session_state:
