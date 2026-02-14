@@ -32,21 +32,45 @@ def process_ocr_results(results, h, w, num_rows, num_cols_active):
     
     # ၁။ OCR ကရတဲ့ စာသားတွေကို သက်ဆိုင်ရာ အကွက်ထဲ အရင်ထည့်မယ်
     for (bbox, text, prob) in results:
-        # Bounding box ရဲ့ အလယ်ဗဟိုကို တွက်ချက်
-        cx = np.mean([p[0] for p in bbox])
-        cy = np.mean([p[1] for p in bbox])
-        
-        # Grid index ကို ပိုမိုတိကျအောင် တွက်ချက်
-        c_idx = int((cx / w) * num_cols_active)
-        r_idx = int((cy / h) * num_rows)
+                cx = np.mean([p[0] for p in bbox])
+                cy = np.mean([p[1] for p in bbox])
+                
+                rel_x = cx / w
+                c_idx = 0
+                for i, step in enumerate(col_steps):
+                    if rel_x <= step:
+                        c_idx = i
+                        break
+                
+                r_idx = int((cy / h) * num_rows)
 
-        if 0 <= r_idx < num_rows and 0 <= c_idx < 8:
-            # စာလုံးအမှားပြင်ဆင်ခြင်း (ဥပမာ- 'g' ကို '6', 's' ကို '5')
-            cleaned_text = text.upper().strip()
-            replacements = {'S': '5', 'G': '6', 'I': '1', 'Z': '7', 'B': '8', 'O': '0', 'L': '1'}
-            for k, v in replacements.items():
-                cleaned_text = cleaned_text.replace(k, v)
-            grid_data[r_idx][c_idx] = cleaned_text
+                if 0 <= r_idx < num_rows and 0 <= c_idx < 8:
+                    txt = text.upper().strip()
+
+                    # ၁။ အင်္ဂလိပ်စာလုံးများကို ဂဏန်းသို့ အတင်းအကျပ်ပြောင်းလဲခြင်း (Hard Mapping)
+                    # ဥပမာ- GO -> 60, TZO -> 770 ဖြစ်သွားအောင် လုပ်ပေးပါသည်
+                    repls = {
+                        'S': '5', 'T': '7', 'Z': '7', 'G': '6', 'I': '1', 
+                        'L': '1', 'O': '0', 'B': '8', 'Q': '0', 'A': '4'
+                    }
+                    for k, v in repls.items():
+                        txt = txt.replace(k, v)
+
+                    # ၂။ သုံးလုံးထိုးဂဏန်းတိုင်များ (A, C, E, G) အတွက် အထူးသန့်စင်ခြင်း
+                    if c_idx in [0, 2, 4, 6]:
+                        # ဂဏန်း (0-9) နှင့် 'R' မှလွဲ၍ ကျန်သည့် စာလုံးအားလုံး (ဥပမာ- [, _, /) ကို ဖယ်ထုတ်ပစ်မည်
+                        txt = re.sub(r'[^0-9R]', '', txt)
+                        
+                        # ဂဏန်း ၃ လုံးထက် ကျော်နေပါက ရှေ့ဆုံး ၃ လုံးကိုသာ ယူမည် (လက်ရေးကပ်နေလျှင်)
+                        if len(txt) > 3 and 'R' not in txt:
+                            txt = txt[:3]
+
+                    # ၃။ ငွေပမာဏတိုင်များ (B, D, F, H) အတွက် သန့်စင်ခြင်း
+                    else:
+                        # ဂဏန်း၊ X နှင့် * မှလွဲ၍ ကျန်တာဖယ်မည် (ဥပမာ- [20 ကို 20 ဟု ပြင်မည်)
+                        txt = re.sub(r'[^0-9X*]', '', txt)
+
+                    grid_data[r_idx][c_idx] = txt
 
     # ၂။ Ditto logic (အောက်က အတူတူပဲဆိုတဲ့ သင်္ကေတ) ကို ကိုင်တွယ်ခြင်း
     for c in range(num_cols_active):
