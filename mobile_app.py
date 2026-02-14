@@ -84,27 +84,42 @@ if uploaded_file:
     st.image(img, channels="BGR", use_container_width=True)
 
     if st.button("🔍 စစ်ဆေးမည် (OCR Scan)"):
-     with st.spinner("ဖတ်နေပါသည်..."):
-        h, w = img.shape[:2]
-        grid_data = [["" for _ in range(8)] for _ in range(num_rows)]
-        results = reader.readtext(img)
+        with st.spinner("၈ တိုင်စလုံးကို အသေးစိတ် ဖတ်နေပါသည်..."):
+            # ၁။ ပုံရိပ်ကို OCR ဖတ်ရ ပိုကောင်းအောင် ပြုပြင်ခြင်း (Grayscale & Threshold)
+            gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+            # အလင်းအမှောင် ညှိပေးခြင်းဖြင့် စာလုံးများကို ပိုမိုထင်ရှားစေသည်
+            processed_img = cv2.adaptiveThreshold(gray, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, cv2.THRESH_BINARY, 11, 2)
+            
+            h, w = img.shape[:2]
+            grid_data = [["" for _ in range(8)] for _ in range(num_rows)]
+            
+            # ၂။ OCR ဖတ်ခြင်း (ပုံရိပ်အသစ်ဖြင့်)
+            results = reader.readtext(processed_img)
 
-        # --- OCR Result Processing (Error Fixed) ---
-        grid_data = [["" for _ in range(8)] for _ in range(num_rows)]
-        
-        # ၁။ OCR မှရလာသော စာသားများကို သက်ဆိုင်ရာ Grid အကွက်ထဲထည့်ခြင်း
-        for (bbox, text, prob) in results:
-            cx, cy = np.mean([p[0] for p in bbox]), np.mean([p[1] for p in bbox])
-            c_idx = int((cx / w) * num_cols_active)
-            r_idx = int((cy / h) * num_rows)
+            # ၃။ OCR ရလဒ်များကို အကွက်ချခြင်း
+            for (bbox, text, prob) in results:
+                # Bounding Box ရဲ့ အလယ်မှတ်ကို ယူပါ
+                cx = (bbox[0][0] + bbox[1][0] + bbox[2][0] + bbox[3][0]) / 4
+                cy = (bbox[0][1] + bbox[1][1] + bbox[2][1] + bbox[3][1]) / 4
+                
+                # Column Index ကို ပိုမိုတိကျစေရန် တွက်ချက်ခြင်း
+                # width တစ်ခုလုံးကို num_cols_active နဲ့ ညီတူညီမျှ ခွဲဝေသည်
+                c_idx = int((cx / w) * num_cols_active)
+                r_idx = int((cy / h) * num_rows)
 
-            if 0 <= r_idx < num_rows and 0 <= c_idx < 8:
-                # လက်ရေးမူတွင် မှားဖတ်လေ့ရှိသော စာလုံးများကို ပြင်ဆင်ခြင်း
-                txt = text.upper().strip()
-                replacements = {'S': '5', 'G': '6', 'I': '1', 'Z': '7', 'B': '8', 'O': '0'}
-                for k, v in replacements.items():
-                    txt = txt.replace(k, v)
-                grid_data[r_idx][c_idx] = txt
+                # နယ်နိမိတ်အတွင်းရှိမှသာ ထည့်သွင်းမည်
+                if 0 <= r_idx < num_rows and 0 <= c_idx < 8:
+                    txt = text.upper().strip()
+                    # စာလုံးအမှားများ ပြင်ဆင်ခြင်း
+                    replacements = {'S': '5', 'G': '6', 'I': '1', 'Z': '7', 'B': '8', 'O': '0', 'L': '1'}
+                    for k, v in replacements.items():
+                        txt = txt.replace(k, v)
+                    
+                    # လက်ရှိအကွက်ထဲ စာသားထည့်ပါ (အကွက်တစ်ခုထဲ စာသား ၂ ခုရှိလျှင် ပေါင်းထည့်မည်)
+                    if grid_data[r_idx][c_idx] == "":
+                        grid_data[r_idx][c_idx] = txt
+                    else:
+                        grid_data[r_idx][c_idx] += txt
 
         # ၂။ Ditto logic (အပေါ်အတိုင်းယူခြင်း) နှင့် ဂဏန်းသန့်စင်ခြင်း
         for c in range(num_cols_active):
