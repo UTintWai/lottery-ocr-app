@@ -96,10 +96,12 @@ if uploaded_file:
             
             h, w = img.shape[:2]
             grid_data = [["" for _ in range(8)] for _ in range(num_rows)]
-            results = reader.readtext(processed_img, detail=1)
+            # Reader logic ကို အောက်ပါ parameter များဖြင့် အစားထိုးပါ
+            results = reader.readtext(processed_img, detail=1, contrast_ths=0.2, adjust_contrast=0.7)
 
-            # Column Boundaries (၈ တိုင်အတွက် ရာခိုင်နှုန်းဖြင့် ခွဲဝေမှု)
-            col_steps = [0.125, 0.25, 0.375, 0.5, 0.625, 0.75, 0.875, 1.0]
+            # Column boundaries ကို ပုံသေ 0.125 စီမယူဘဲ လက်ရေးမူ grid အတိုင်း ညှိခြင်း
+            # ဤတန်ဖိုးများသည် image_2f5d22.png ပါ column အကွာအဝေးများအပေါ် အခြေခံထားပါသည်
+            col_steps = [0.13, 0.24, 0.38, 0.49, 0.63, 0.74, 0.88, 1.0]
 
             for (bbox, text, prob) in results:
                 cx = np.mean([p[0] for p in bbox])
@@ -131,12 +133,14 @@ if uploaded_file:
                 last_val = ""
                 for r in range(num_rows):
                     curr = str(grid_data[r][c]).strip()
-                    is_ditto = curr in ['"', "''", "4", "LL", "Y", "V", "11", "U"] or (not curr.isalnum() and curr != "")
-                    
-                    if (curr == "" or is_ditto) and last_val != "":
-                        grid_data[r][c] = last_val
-                    elif curr != "":
-                        last_val = curr
+                    # --- Ditto Logic အားကောင်းစေရန် ---
+                    # လက်ရေးမူတွင် ditto ကို 11, v, u, " စသည်ဖြင့် အမျိုးမျိုးဖတ်တတ်သည်
+                    is_ditto = curr in ['"', "''", "4", "LL", "Y", "V", "11", "U", "W", "-"] or (not curr.isalnum() and curr != "")
+
+if (curr == "" or is_ditto) and last_val != "":
+        grid_data[r][c] = last_val # အပေါ်ကွက်မှ တန်ဖိုးကို ဆွဲယူမည်
+elif curr != "":
+            last_val = curr
 
             st.session_state['data_final'] = grid_data
 
