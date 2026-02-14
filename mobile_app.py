@@ -89,44 +89,47 @@ if uploaded_file:
         grid_data = [["" for _ in range(8)] for _ in range(num_rows)]
         results = reader.readtext(img)
 
+        # --- OCR Result Processing (Error Fixed) ---
+        grid_data = [["" for _ in range(8)] for _ in range(num_rows)]
+        
+        # ၁။ OCR မှရလာသော စာသားများကို သက်ဆိုင်ရာ Grid အကွက်ထဲထည့်ခြင်း
         for (bbox, text, prob) in results:
             cx, cy = np.mean([p[0] for p in bbox]), np.mean([p[1] for p in bbox])
             c_idx = int((cx / w) * num_cols_active)
             r_idx = int((cy / h) * num_rows)
 
             if 0 <= r_idx < num_rows and 0 <= c_idx < 8:
-                txt = text.upper().strip().replace('S','5').replace('I','1').replace('Z','7').replace('G','6')
+                # လက်ရေးမူတွင် မှားဖတ်လေ့ရှိသော စာလုံးများကို ပြင်ဆင်ခြင်း
+                txt = text.upper().strip()
+                replacements = {'S': '5', 'G': '6', 'I': '1', 'Z': '7', 'B': '8', 'O': '0'}
+                for k, v in replacements.items():
+                    txt = txt.replace(k, v)
                 grid_data[r_idx][c_idx] = txt
 
-        # --- OCR Result Formatting & Strict Filtering ---
+        # ၂။ Ditto logic (အပေါ်အတိုင်းယူခြင်း) နှင့် ဂဏန်းသန့်စင်ခြင်း
         for c in range(num_cols_active):
-                last_val = ""
-    for r in range(num_rows):
-        curr = str(grid_data[r][c]).strip().upper()
+            last_val = ""
+            for r in range(num_rows):
+                curr = str(grid_data[r][c]).strip().upper()
 
-        if c % 2 == 0:  # number columns
-            curr = curr.replace('S','5').replace('I','1').replace('Z','7').replace('G','6')
-            curr = re.sub(r'[^0-9R]', '', curr)
-            if curr.isdigit():
-                curr = curr[-3:].zfill(3)
-            # တူရင် ပေါင်းထည့်
-            if last_val and curr == last_val:
-                grid_data[r][c] = str(int(last_val) + int(curr))
-            else:
-                grid_data[r][c] = curr
-                if curr:
-                    last_val = curr
-
-        else:  # amount columns
-            nums = re.findall(r'\d+', curr)
-            curr = max(nums, key=lambda x: int(x)) if nums else ""
-            # single digit / blank → inherit
-            if (curr == "" or (curr.isdigit() and len(curr) <= 2)) and last_val:
-                grid_data[r][c] = last_val
-            else:
-                grid_data[r][c] = curr
-                if curr:
-                    last_val = curr
+                # Ditto symbol စစ်ဆေးခြင်း (ဥပမာ- " , 4 , ll , y သို့မဟုတ် သင်္ကေတများ)
+                is_ditto = curr in ['"', "''", "4", "LL", "Y"] or (not curr.isalnum() and curr != "")
+                
+                if (curr == "" or is_ditto) and last_val != "":
+                    grid_data[r][c] = last_val
+                else:
+                    if c % 2 == 0:  # ဂဏန်းတိုင် (Number Columns)
+                        # ဂဏန်းနှင့် R ကလွဲရင် ကျန်တာဖယ်မည်
+                        curr = re.sub(r'[^0-9R]', '', curr)
+                    else:           # ငွေပမာဏတိုင် (Amount Columns)
+                        # Multiplier (ဥပမာ 50*50) မဟုတ်လျှင် ဂဏန်းသီးသန့်ယူမည်
+                        if '*' not in curr:
+                            nums = re.findall(r'\d+', curr)
+                            curr = nums[0] if nums else ""
+                    
+                    grid_data[r][c] = curr
+                    if curr != "":
+                        last_val = curr
 
         st.session_state['data_final'] = grid_data
 
