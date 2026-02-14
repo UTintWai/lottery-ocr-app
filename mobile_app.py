@@ -122,32 +122,37 @@ if uploaded_file:
                     grid_data[r_idx][c_idx] = txt
 
             # ----------- STRICT CLEANING -----------
-            for c in range(num_cols_active):
+            # --- OCR Result Formatting & Strict Filtering ---
+for c in range(num_cols_active):
+    last_val = ""
+    for r in range(num_rows):
+        curr = str(grid_data[r][c]).strip().upper()
 
-                last_val = ""
+        if c % 2 == 0:  # number columns
+            curr = curr.replace('S','5').replace('I','1').replace('Z','7').replace('G','6')
+            curr = re.sub(r'[^0-9R]', '', curr)
+            if curr:
+                if curr.isdigit():
+                    m = re.search(r'(\d{3})$', curr)
+                    if m:
+                        curr = m.group(1)
+                    else:
+                        curr = curr[-3:].zfill(3)
+        else:  # amount columns
+            nums = re.findall(r'\d+', curr)
+            curr = max(nums, key=lambda x: int(x)) if nums else ""
 
-                for r in range(num_rows):
-                    curr = str(grid_data[r][c]).strip()
+        # Ditto logic
+        if (curr == "" or (curr.isdigit() and len(curr) <= 2)) and last_val:
+            grid_data[r][c] = last_val
+        else:
+            grid_data[r][c] = curr
+            if curr:
+                last_val = curr
 
-                    if c % 2 == 0:  # NUMBER COLUMN
-                        curr = re.sub(r'[^0-9R]', '', curr)
+# loop အပြီးမှာ assign
+st.session_state['data_final'] = grid_data
 
-                        if curr:
-                            if curr.isdigit():
-                                curr = curr[-3:].zfill(3)
-
-                        if curr == "" and last_val:
-                            grid_data[r][c] = last_val
-                        else:
-                            grid_data[r][c] = curr
-                            if curr:
-                                last_val = curr
-
-                    else:  # AMOUNT COLUMN
-                        nums = re.findall(r'\d+', curr)
-                        grid_data[r][c] = max(nums, key=int) if nums else ""
-
-            st.session_state['data_final'] = grid_data
 
 # ---------------- GOOGLE SHEET ----------------
 if 'data_final' in st.session_state:
