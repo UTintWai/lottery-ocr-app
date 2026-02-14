@@ -100,31 +100,33 @@ if uploaded_file:
 
         # --- OCR Result Formatting & Strict Filtering ---
         for c in range(num_cols_active):
-            last_val = ""
-            for r in range(num_rows):
-                curr = str(grid_data[r][c]).strip().upper()
+                last_val = ""
+    for r in range(num_rows):
+        curr = str(grid_data[r][c]).strip().upper()
 
-                if c % 2 == 0:  # number columns
-                    curr = curr.replace('S','5').replace('I','1').replace('Z','7').replace('G','6')
-                    curr = re.sub(r'[^0-9R]', '', curr)
-                    if curr:
-                        if curr.isdigit():
-                            m = re.search(r'(\d{3})$', curr)
-                            if m:
-                                curr = m.group(1)
-                            else:
-                                curr = curr[-3:].zfill(3)
-                else:  # amount columns
-                    nums = re.findall(r'\d+', curr)
-                    curr = max(nums, key=lambda x: int(x)) if nums else ""
+        if c % 2 == 0:  # number columns
+            curr = curr.replace('S','5').replace('I','1').replace('Z','7').replace('G','6')
+            curr = re.sub(r'[^0-9R]', '', curr)
+            if curr.isdigit():
+                curr = curr[-3:].zfill(3)
+            # တူရင် ပေါင်းထည့်
+            if last_val and curr == last_val:
+                grid_data[r][c] = str(int(last_val) + int(curr))
+            else:
+                grid_data[r][c] = curr
+                if curr:
+                    last_val = curr
 
-                # Ditto logic
-                if (curr == "" or (curr.isdigit() and len(curr) <= 2)) and last_val:
-                    grid_data[r][c] = last_val
-                else:
-                    grid_data[r][c] = curr
-                    if curr:
-                        last_val = curr
+        else:  # amount columns
+            nums = re.findall(r'\d+', curr)
+            curr = max(nums, key=lambda x: int(x)) if nums else ""
+            # single digit / blank → inherit
+            if (curr == "" or (curr.isdigit() and len(curr) <= 2)) and last_val:
+                grid_data[r][c] = last_val
+            else:
+                grid_data[r][c] = curr
+                if curr:
+                    last_val = curr
 
         st.session_state['data_final'] = grid_data
 
