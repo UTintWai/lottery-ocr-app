@@ -8,7 +8,7 @@ import gspread
 from itertools import permutations
 from oauth2client.service_account import ServiceAccountCredentials
 
-# ---------------- ၁။ CONFIG & OCR LOAD ----------------
+# ---------------- ၁။ CONFIG & FUNCTIONS ----------------
 st.set_page_config(page_title="Lottery Pro 2026", layout="wide")
 
 @st.cache_resource
@@ -51,15 +51,16 @@ def process_bet_logic(num_txt, amt_txt):
     except: pass
     return results
 
-# ---------------- ၂။ SIDEBAR ----------------
+# ---------------- ၂။ SIDEBAR (ပိုလျှံတန်ဖိုးသတ်မှတ်ရန်) ----------------
 with st.sidebar:
     st.header("⚙️ Settings")
+    bet_limit = st.number_input("ဂဏန်းတစ်ကွက် အများဆုံး လက်ခံမည့်ပမာဏ (Limit)", min_value=100, value=5000)
     num_rows = st.number_input("Rows", min_value=1, value=25)
-    col_mode = st.selectbox("Columns", ["2","4","6","8"], index=2) # Default to 6
+    col_mode = st.selectbox("Columns", ["2","4","6","8"], index=2)
     num_cols_active = int(col_mode)
 
-# ---------------- ၃။ OCR SCAN LOGIC ----------------
-st.title("🎰 Lottery OCR Stable Version")
+# ---------------- ၃။ OCR SCAN LOGIC (ကျဲသွားသည်ကို ပြန်ပြင်ထားသည်) ----------------
+st.title("🎰 Lottery OCR Final Version")
 uploaded_file = st.file_uploader("Upload Image", type=["jpg","png","jpeg"])
 
 if uploaded_file:
@@ -68,16 +69,16 @@ if uploaded_file:
     st.image(img, channels="BGR", use_container_width=True)
 
     if st.button("🔍 စစ်ဆေးမည် (OCR Scan)"):
-        with st.spinner(f"{num_cols_active} တိုင်ကို ဖတ်နေပါသည်..."):
+        with st.spinner("အသေးစိတ် ဖတ်နေပါသည်..."):
             gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
             clahe = cv2.createCLAHE(clipLimit=4.0, tileGridSize=(8,8))
             processed_img = clahe.apply(gray)
             
             h, w = img.shape[:2]
             grid_data = [["" for _ in range(num_cols_active)] for _ in range(num_rows)]
-            results = reader.readtext(processed_img, detail=1, contrast_ths=0.05)
+            # contrast_ths ကို လျှော့ချထားခြင်းဖြင့် ကျဲသွားသည်ကို ပြန်စိလာစေမည်
+            results = reader.readtext(processed_img, detail=1, contrast_ths=0.01, adjust_contrast=0.9)
 
-            # ၆ တိုင်စနစ်အတွက် D1-6 မိစေရန် Column Boundary ညှိခြင်း
             if num_cols_active == 6:
                 col_steps = [0.18, 0.35, 0.52, 0.68, 0.85, 1.0]
             else:
@@ -92,28 +93,28 @@ if uploaded_file:
 
                 if 0 <= r_idx < num_rows and 0 <= c_idx < num_cols_active:
                     txt = text.upper().strip().replace('S','5').replace('T','7').replace('Z','7').replace('G','6').replace('O','0').replace('I','1')
-                    if c_idx % 2 == 0: # Number Column
+                    if c_idx % 2 == 0:
                         txt = re.sub(r'[^0-9R]', '', txt)
                         if len(txt) == 2 and txt.isdigit(): txt = "0" + txt
                         elif len(txt) > 3 and 'R' not in txt: txt = txt[:3]
-                    else: # Amount Column
+                    else:
                         txt = re.sub(r'[^0-9X*]', '', txt)
                     grid_data[r_idx][c_idx] = txt
 
-            # Ditto Logic
+            # Ditto
             for c in range(num_cols_active):
                 last_v = ""
                 for r in range(num_rows):
                     curr = str(grid_data[r][c]).strip()
-                    if curr in ['"', "''", "4", "LL", "V", "11", "U", "-"] and last_v: grid_data[r][c] = last_v
+                    if curr in ['"', "''", "4", "LL", "V", "11", "U", "-", "Y"] and last_v: grid_data[r][c] = last_v
                     elif curr: last_v = curr
             st.session_state['data_final'] = grid_data
 
-# ---------------- ၄။ GOOGLE SHEET EXPORT ----------------
+# ---------------- ၄။ SHEET 1, 2, 3 UPLOAD ----------------
 if 'data_final' in st.session_state:
     edited_data = st.data_editor(st.session_state['data_final'], use_container_width=True)
 
-    if st.button("🚀 Upload to Google Sheet"):
+    if st.button("🚀 Upload to Sheets (All 3 Sheets)"):
         try:
             secret_info = json.loads(st.secrets["GCP_SERVICE_ACCOUNT_FILE"])
             secret_info["private_key"] = secret_info["private_key"].replace("\\n","\n")
@@ -125,20 +126,34 @@ if 'data_final' in st.session_state:
             sh1 = ss.get_worksheet(0)
             sh1.append_rows(edited_data)
 
-            # Sheet 2: Summing Logic
+            # ပေါင်းခြင်း Logic
             master_sum = {}
             for row in edited_data:
-                # Dynamic range based on active columns
                 for i in range(0, len(row)-1, 2):
                     n, a = str(row[i]).strip(), str(row[i+1]).strip()
                     if n and a:
                         bet_res = process_bet_logic(n, a)
                         for k, v in bet_res.items(): master_sum[k] = master_sum.get(k, 0) + v
 
+            # Sheet 2: ပေါင်းခြင်း (Sum)
             sh2 = ss.get_worksheet(1)
             sh2.clear()
             sh2.append_rows([["Number", "Total"]] + [[k, v] for k, v in sorted(master_sum.items())])
+
+            # Sheet 3: ပိုလျှံတန်ဖိုး (Voucher/Excess)
+            sh3 = ss.get_worksheet(2) # Sheet 3 ရှိနေဖို့ လိုအပ်ပါတယ်
+            sh3.clear()
+            excess_list = [["Number", "Excess Amount"]]
+            for k, v in sorted(master_sum.items()):
+                if v > bet_limit:
+                    excess_amt = v - bet_limit
+                    excess_list.append([k, excess_amt])
             
-            st.success("✅ Sheet 1 & 2 သို့ ဒေတာများ ပို့ဆောင်ပြီးပါပြီ!")
+            if len(excess_list) > 1:
+                sh3.append_rows(excess_list)
+                st.success(f"✅ Sheet 1, 2 နှင့် 3 (ပိုလျှံ {len(excess_list)-1} ကွက်) ကို ပို့ဆောင်ပြီးပါပြီ!")
+            else:
+                st.success("✅ Sheet 1, 2 ကို ပို့ဆောင်ပြီးပါပြီ။ (ပိုလျှံဂဏန်း မရှိပါ)")
+
         except Exception as e:
             st.error(f"❌ Error: {str(e)}")
