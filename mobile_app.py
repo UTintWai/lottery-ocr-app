@@ -69,76 +69,76 @@ if uploaded_file:
     st.image(img, channels="BGR", use_container_width=True)
 
     # ---------------- ၃။ OCR SCAN LOGIC (အကွက်စိပ်စိပ်ဖတ်ရန် Version) ----------------
+# ---------------- ၃။ OCR SCAN LOGIC (Strict Grid Version) ----------------
 if st.button("🔍 စစ်ဆေးမည် (OCR Scan)"):
     with st.spinner(f"{num_cols_active} တိုင်စလုံးကို အနုစိတ် ဖတ်နေပါသည်..."):
-        # ၁။ Image Enhancement (စာလုံးပိုစွဲအောင်လုပ်ခြင်း)
+        # ၁။ Image Pre-processing
         gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
-        clahe = cv2.createCLAHE(clipLimit=3.0, tileGridSize=(8,8))
+        clahe = cv2.createCLAHE(clipLimit=4.0, tileGridSize=(8,8))
         processed_img = clahe.apply(gray)
         
         h, w = img.shape[:2]
+        # ရွေးထားသော တိုင်အရေအတွက်အတိုင်း Grid ဆောက်မည်
         grid_data = [["" for _ in range(num_cols_active)] for _ in range(num_rows)]
         
-        # ၂။ OCR Reading (အစိပ်ဆုံး parameter များ သုံးထားသည်)
+        # ၂။ OCR Reading (အစိပ်ဆုံး Parameter များ)
         results = reader.readtext(
             processed_img, 
             detail=1,
-            contrast_ths=0.1, 
-            low_text=0.2, 
-            text_threshold=0.4,
+            contrast_ths=0.01, 
+            low_text=0.1, 
+            text_threshold=0.3,
             mag_ratio=2.0
         )
 
-        # ၃။ Column Boundaries ကို လက်ရေးစာရွက်နှင့် ကိုက်အောင် ညှိခြင်း
-        # ၈ တိုင်ဆိုလျှင် ၁ တိုင်ကို ၁၂.၅% စီ အချိုးကျ ခွဲဝေသည်
-        col_width_pct = 1.0 / num_cols_active
-        
+        # ၃။ Column Boundaries တွက်ချက်ခြင်း
+        # ၈ တိုင်ဆိုလျှင် ပုံရဲ့ width ကို ၈ ပုံ အညီအမျှ ပိုင်းခြားသည်
+        col_width = w / num_cols_active
+        row_height = h / num_rows
+
         for (bbox, text, prob) in results:
             # ဗဟိုမှတ် ရှာခြင်း
             cx = np.mean([p[0] for p in bbox])
             cy = np.mean([p[1] for p in bbox])
             
-            # ရာခိုင်နှုန်းဖြင့် နေရာရှာခြင်း
-            rel_x = cx / w
-            rel_y = cy / h
-            
-            # Column နှင့် Row အညွှန်းကိန်း (Index) တွက်ခြင်း
-            c_idx = int(rel_x / col_width_pct)
-            r_idx = int(rel_y * num_rows)
+            # Column နှင့် Row Index ကို အတိအကျ ရှာခြင်း
+            c_idx = int(cx // col_width)
+            r_idx = int(cy // row_height)
 
-            # Boundaries အတွင်း ရှိမရှိ စစ်ဆေးခြင်း
             if 0 <= r_idx < num_rows and 0 <= c_idx < num_cols_active:
                 txt = text.upper().strip()
-                # အက္ခရာမှ ဂဏန်းသို့ အတင်းပြောင်းလဲခြင်း
-                replacements = {'O':'0', 'I':'1', 'S':'5', 'G':'6', 'Z':'7', 'B':'8', 'A':'4', 'T':'7'}
-                for k, v in replacements.items():
-                    txt = txt.replace(k, v)
+                # Character Fixes
+                repls = {'O':'0','I':'1','S':'5','G':'6','Z':'7','B':'8','A':'4','T':'7','L':'1'}
+                for k, v in repls.items(): txt = txt.replace(k, v)
                 
-                # ဂဏန်းတိုင်နှင့် ပမာဏတိုင် ခွဲခြားသန့်စင်ခြင်း
-                if c_idx % 2 == 0: 
-                    txt = re.sub(r'[^0-9R]', '', txt) # ဂဏန်းတိုင် (Number)
-                else: 
-                    txt = re.sub(r'[^0-9X*]', '', txt) # ပမာဏတိုင် (Amount)
+                # Column အလိုက် Clean လုပ်ခြင်း
+                if c_idx % 2 == 0: # ဂဏန်းတိုင်
+                    txt = re.sub(r'[^0-9R]', '', txt)
+                    if len(txt) == 2 and txt.isdigit(): txt = "0" + txt
+                    elif len(txt) > 3 and 'R' not in txt: txt = txt[:3]
+                else: # ပမာဏတိုင်
+                    txt = re.sub(r'[^0-9X*]', '', txt)
                 
-                # အကယ်၍ အကွက်တစ်ခုထဲမှာ စာလုံး ၂ ခါဖတ်မိရင် ပေါင်းပေးမည်
-                if grid_data[r_idx][c_idx]:
-                    grid_data[r_idx][c_idx] += txt
-                else:
+                # အကွက်ထဲတွင် စာရှိနှင့်ပြီးသားဖြစ်ပါက ပေါင်းထည့်ပေးရန် (ကျဲတာကို ကာကွယ်ရန်)
+                if grid_data[r_idx][c_idx] == "":
                     grid_data[r_idx][c_idx] = txt
+                else:
+                    # နံပါတ်တိုင်ဆိုလျှင် ရှေ့ကဆက်မည်၊ ပမာဏဆိုလျှင် နောက်ကဆက်မည်
+                    grid_data[r_idx][c_idx] = txt if c_idx % 2 == 0 else grid_data[r_idx][c_idx] + txt
 
-        # ၄။ Ditto Logic (အပေါ်ကဂဏန်းအတိုင်း အလိုအလျောက် ဖြည့်ခြင်း)
+        # ၄။ Ditto Logic (အစုံအလင်)
         for c in range(num_cols_active):
             last_val = ""
             for r in range(num_rows):
                 curr = str(grid_data[r][c]).strip()
-                # Ditto သင်္ကေတများ (", '', v, v, -, 11)
-                if curr in ['"', "''", "v", "V", "11", "ll", "LL", "-"] and last_val:
+                # Ditto သင်္ကေတများ (", '', 4, v, V, 11, ll, LL, -, Y)
+                if curr in ['"', "''", "4", "v", "V", "11", "ll", "LL", "-", "Y"] and last_val:
                     grid_data[r][c] = last_val
                 elif curr:
                     last_val = curr
 
         st.session_state['data_final'] = grid_data
-        st.rerun() # Data editor မှာ ချက်ချင်းပေါ်လာစေရန်
+        st.rerun()
 
 # ---------------- ၄။ SHEET 1, 2, 3 UPLOAD ----------------
 if 'data_final' in st.session_state:
