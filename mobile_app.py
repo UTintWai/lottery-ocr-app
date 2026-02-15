@@ -68,47 +68,74 @@ if uploaded_file:
     img = cv2.imdecode(file_bytes, 1)
     st.image(img, channels="BGR", use_container_width=True)
 
-    if st.button("🔍 စစ်ဆေးမည် (OCR Scan)"):
-        with st.spinner("အသေးစိတ် ဖတ်နေပါသည်..."):
-            gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
-            clahe = cv2.createCLAHE(clipLimit=4.0, tileGridSize=(8,8))
-            processed_img = clahe.apply(gray)
+    # ---------------- ၃။ OCR SCAN LOGIC (အစိပ်ဆုံး Version) ----------------
+if st.button("🔍 စစ်ဆေးမည် (OCR Scan)"):
+    with st.spinner("အသေးစိတ် စိပ်စိပ်စပ်စပ် ဖတ်နေပါသည်..."):
+        gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+        # Contrast ကို ၄.၀ ထိတင်ထားလို့ ခဲတံအဖျော့တွေကို ပိုမိစေပါတယ်
+        clahe = cv2.createCLAHE(clipLimit=4.0, tileGridSize=(8,8))
+        processed_img = clahe.apply(gray)
+        
+        h, w = img.shape[:2]
+        grid_data = [["" for _ in range(num_cols_active)] for _ in range(num_rows)]
+        
+        # --- ကျဲနေတာကို ဖြေရှင်းရန် Parameter အသစ်များ ---
+        results = reader.readtext(
+            processed_img, 
+            detail=1, 
+            contrast_ths=0.001,    # အဖျော့ဆုံးတွေကိုပါ ယူရန်
+            low_text=0.1,          # စာလုံးမပြတ်တပြတ်တွေကိုပါ မကျန်အောင်ဖတ်ရန် (ပိုလျှော့ထားသည်)
+            mag_ratio=2.5,         # ပုံကို ၂ ဆခွဲပိုချဲ့ဖတ်ရန်
+            text_threshold=0.3,    # စာလုံးဖြစ်နိုင်ခြေ ၃၀% ရှိရင်တောင် ယူရန် (ပိုစိပ်လာစေသည်)
+            add_margin=0.2,        # စာလုံးဘောင်ကို ချဲ့ယူရန်
+            adjust_contrast=0.9
+        )
+
+        if num_cols_active == 6:
+            # လက်ရေးမူပါ grid အချိုးအစားအတိုင်း တိကျအောင် ညှိထားသည်
+            col_steps = [0.18, 0.35, 0.52, 0.68, 0.85, 1.0]
+        else:
+            col_steps = [(i+1)/num_cols_active for i in range(num_cols_active)]
+
+        for (bbox, text, prob) in results:
+            left_x = bbox[0][0]
+            cx, cy = np.mean([p[0] for p in bbox]), np.mean([p[1] for p in bbox])
             
-            h, w = img.shape[:2]
-            grid_data = [["" for _ in range(num_cols_active)] for _ in range(num_rows)]
-            # contrast_ths ကို လျှော့ချထားခြင်းဖြင့် ကျဲသွားသည်ကို ပြန်စိလာစေမည်
-            results = reader.readtext(processed_img, detail=1, contrast_ths=0.01, adjust_contrast=0.9)
+            # စာလုံးရှေ့ဆုံး (left_x) ကို ၄၀% အထိ အလေးပေးထားလို့ 120 ထဲက 1 လွတ်တာမျိုး သက်သာစေသည်
+            rel_x = (left_x * 0.4 + cx * 0.6) / w
+            c_idx = next((i for i, s in enumerate(col_steps) if rel_x <= s), num_cols_active-1)
+            r_idx = int((cy / h) * num_rows)
 
-            if num_cols_active == 6:
-                col_steps = [0.18, 0.35, 0.52, 0.68, 0.85, 1.0]
-            else:
-                col_steps = [(i+1)/num_cols_active for i in range(num_cols_active)]
-
-            for (bbox, text, prob) in results:
-                left_x = bbox[0][0]
-                cx, cy = np.mean([p[0] for p in bbox]), np.mean([p[1] for p in bbox])
-                rel_x = (left_x * 0.3 + cx * 0.7) / w
-                c_idx = next((i for i, s in enumerate(col_steps) if rel_x <= s), num_cols_active-1)
-                r_idx = int((cy / h) * num_rows)
-
-                if 0 <= r_idx < num_rows and 0 <= c_idx < num_cols_active:
-                    txt = text.upper().strip().replace('S','5').replace('T','7').replace('Z','7').replace('G','6').replace('O','0').replace('I','1')
-                    if c_idx % 2 == 0:
-                        txt = re.sub(r'[^0-9R]', '', txt)
-                        if len(txt) == 2 and txt.isdigit(): txt = "0" + txt
-                        elif len(txt) > 3 and 'R' not in txt: txt = txt[:3]
-                    else:
-                        txt = re.sub(r'[^0-9X*]', '', txt)
+            if 0 <= r_idx < num_rows and 0 <= c_idx < num_cols_active:
+                txt = text.upper().strip()
+                # အက္ခရာမှ ဂဏန်းသို့ အတင်းပြောင်းခြင်း
+                repls = {'S':'5','T':'7','Z':'7','G':'6','O':'0','I':'1','L':'1','B':'8','A':'4'}
+                for k, v in repls.items():
+                    txt = txt.replace(k, v)
+                
+                if c_idx % 2 == 0: # ဂဏန်းတိုင်
+                    txt = re.sub(r'[^0-9R]', '', txt)
+                    if len(txt) == 2 and txt.isdigit(): txt = "0" + txt
+                    elif len(txt) > 3 and 'R' not in txt: txt = txt[:3]
+                else: # ပမာဏတိုင်
+                    txt = re.sub(r'[^0-9X*]', '', txt)
+                
+                # အကယ်၍ အကွက်ထဲမှာ ရှိနှင့်ပြီးသားဆိုလျှင် (OCR က ခွဲဖတ်မိလျှင်) ပေါင်းထည့်ပေးမည်
+                if grid_data[r_idx][c_idx] == "":
                     grid_data[r_idx][c_idx] = txt
+                else:
+                    grid_data[r_idx][c_idx] += txt
 
-            # Ditto
-            for c in range(num_cols_active):
-                last_v = ""
-                for r in range(num_rows):
-                    curr = str(grid_data[r][c]).strip()
-                    if curr in ['"', "''", "4", "LL", "V", "11", "U", "-", "Y"] and last_v: grid_data[r][c] = last_v
-                    elif curr: last_v = curr
-            st.session_state['data_final'] = grid_data
+        # Ditto Logic (အစုံအလင်)
+        for c in range(num_cols_active):
+            last_v = ""
+            for r in range(num_rows):
+                curr = str(grid_data[r][c]).strip()
+                if curr in ['"', "''", "4", "LL", "V", "11", "U", "-", "Y", "v", "y"] and last_v:
+                    grid_data[r][c] = last_v
+                elif curr:
+                    last_v = curr
+        st.session_state['data_final'] = grid_data
 
 # ---------------- ၄။ SHEET 1, 2, 3 UPLOAD ----------------
 if 'data_final' in st.session_state:
@@ -141,18 +168,23 @@ if 'data_final' in st.session_state:
             sh2.append_rows([["Number", "Total"]] + [[k, v] for k, v in sorted(master_sum.items())])
 
             # Sheet 3: ပိုလျှံတန်ဖိုး (Voucher/Excess)
-            sh3 = ss.get_worksheet(2) # Sheet 3 ရှိနေဖို့ လိုအပ်ပါတယ်
+            # Sheet 3: ပိုလျှံတန်ဖိုး (Voucher/Excess)
+            # အရေးကြီးသည်- Sidebar ရှိ bet_limit ထက် ကျော်မှသာ Sheet 3 ကို ပို့ပါမည်
+            sh3 = ss.get_worksheet(2) 
             sh3.clear()
-            excess_list = [["Number", "Excess Amount"]]
-            for k, v in sorted(master_sum.items()):
-                if v > bet_limit:
-                    excess_amt = v - bet_limit
-                    excess_list.append([k, excess_amt])
             
-            if len(excess_list) > 1:
-                sh3.append_rows(excess_list)
-                st.success(f"✅ Sheet 1, 2 နှင့် 3 (ပိုလျှံ {len(excess_list)-1} ကွက်) ကို ပို့ဆောင်ပြီးပါပြီ!")
+            # ပိုလျှံဂဏန်းများကို စာရင်းလုပ်ခြင်း
+            excess_rows = []
+            for num, total in sorted(master_sum.items()):
+                if total > bet_limit:
+                    excess_amount = total - bet_limit
+                    excess_rows.append([num, excess_amount])
+            
+            if excess_rows:
+                sh3.append_rows([["ဂဏန်း", "ပိုလျှံငွေ"]] + excess_rows)
+                st.success(f"✅ Sheet 3 သို့ ပိုလျှံဂဏန်း {len(excess_rows)} ကွက် ပို့ပြီးပါပြီ။")
             else:
+                sh3.append_row(["ပိုလျှံဂဏန်း မရှိပါ"])
                 st.success("✅ Sheet 1, 2 ကို ပို့ဆောင်ပြီးပါပြီ။ (ပိုလျှံဂဏန်း မရှိပါ)")
 
         except Exception as e:
