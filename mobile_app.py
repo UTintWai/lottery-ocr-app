@@ -72,100 +72,78 @@ if uploaded_file:
     img = cv2.imdecode(file_bytes, 1)
     st.image(img, channels="BGR", use_container_width=True)
 
-    if st.button("🔍 စစ်ဆေးမည် (OCR Scan)"):
-        with st.spinner(f"{num_cols_active} တိုင်စလုံးကို အနုစိတ် ဖတ်နေပါသည်..."):
-            try:
-                gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
-                clahe = cv2.createCLAHE(clipLimit=4.0, tileGridSize=(8,8))
-                processed_img = clahe.apply(gray)
-                
-                h, w = img.shape[:2]
-                grid_data = [["" for _ in range(num_cols_active)] for _ in range(num_rows)]
-                
-                results = reader.readtext(processed_img, detail=1, contrast_ths=0.01, low_text=0.1, text_threshold=0.3)
-
-                # Column Boundaries တွက်ချက်ခြင်း
-                col_width = w / num_cols_active
-                row_height = h / num_rows
-
-                for (bbox, text, prob) in results:
-                    cx = np.mean([p[0] for p in bbox])
-                    cy = np.mean([p[1] for p in bbox])
-                    
-                    c_idx = int(cx // col_width)
-                    r_idx = int(cy // row_height)
-
-                    if 0 <= r_idx < num_rows and 0 <= c_idx < num_cols_active:
-                        txt = text.upper().strip()
-                        # Character Fixes
-                        repls = {'O':'0','I':'1','S':'5','G':'6','Z':'7','B':'8','A':'4','T':'7','L':'1'}
-                        for k, v in repls.items(): txt = txt.replace(k, v)
-                        
-                        if c_idx % 2 == 0: # ဂဏန်းတိုင်
-                            txt = re.sub(r'[^0-9R]', '', txt)
-                            if len(txt) == 2 and txt.isdigit(): txt = "0" + txt
-                            elif len(txt) > 3 and 'R' not in txt: txt = txt[:3]
-                        else: # ပမာဏတိုင်
-                            txt = re.sub(r'[^0-9X*]', '', txt)
-                        
-                        grid_data[r_idx][c_idx] = txt
-
-                # Ditto Logic
-                for c in range(num_cols_active):
-                    last_v = ""
-                    for r in range(num_rows):
-                        curr = str(grid_data[r][c]).strip()
-                        if curr in ['"', "''", "4", "v", "V", "11", "ll", "LL", "-", "Y"] and last_v:
-                            grid_data[r][c] = last_v
-                        elif curr: last_v = curr
-                
-                st.session_state['data_final'] = grid_data
-                st.rerun()
-            except Exception as e:
-                st.error(f"OCR Error: {str(e)}")
-
-# ---------------- ၄။ SHEET UPLOAD ----------------
-if 'data_final' in st.session_state:
-    edited_data = st.data_editor(st.session_state['data_final'], use_container_width=True)
-
-    if st.button("🚀 Upload to Sheets"):
+    # ---------------- ၃။ OCR SCAN LOGIC (ကျဲခြင်းကို ကာကွယ်သော Dynamic Splitting Version) ----------------
+if st.button("🔍 စစ်ဆေးမည် (OCR Scan)"):
+    with st.spinner(f"{num_cols_active} တိုင်စလုံးကို အကွက်စိပ်စိပ် ပြန်စီနေပါသည်..."):
         try:
-            # GCP Credentials
-            secret_info = json.loads(st.secrets["GCP_SERVICE_ACCOUNT_FILE"])
-            secret_info["private_key"] = secret_info["private_key"].replace("\\n","\n")
-            creds = ServiceAccountCredentials.from_json_keyfile_dict(secret_info, ["https://spreadsheets.google.com/feeds","https://www.googleapis.com/auth/drive"])
-            client = gspread.authorize(creds)
-            ss = client.open("LotteryData")
+            gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+            # စာလုံးပိုကြွလာအောင် Contrast မြှင့်တင်ခြင်း
+            processed_img = cv2.convertScaleAbs(gray, alpha=1.5, beta=0)
             
-            # ၁။ Sheet 1 (Raw) - တိုင်အရေအတွက်အတိုင်းပို့မည်
-            sh1 = ss.get_worksheet(0)
-            sh1.append_rows(edited_data)
+            h, w = img.shape[:2]
+            grid_data = [["" for _ in range(num_cols_active)] for _ in range(num_rows)]
+            
+            results = reader.readtext(processed_img, detail=1)
 
-            # ၂။ ပေါင်းခြင်း Logic
-            master_sum = {}
-            for row in edited_data:
-                # ဇယားထဲရှိ အကွက်တိုင်းကို ၂ ကွက်တွဲစီ စစ်မည်
-                for i in range(0, len(row)-1, 2):
-                    n, a = str(row[i]).strip(), str(row[i+1]).strip()
-                    if n and a:
-                        bet_res = process_bet_logic(n, a)
-                        for k, v in bet_res.items():
-                            master_sum[k] = master_sum.get(k, 0) + v
+            # Column တစ်ခုချင်းစီရဲ့ boundary တွေကို တိတိကျကျ သတ်မှတ်ခြင်း
+            col_bounds = [i * (w / num_cols_active) for i in range(num_cols_active + 1)]
 
-            # ၃။ Sheet 2 (Total)
-            sh2 = ss.get_worksheet(1)
-            sh2.clear()
-            sh2.append_rows([["Number", "Total"]] + [[k, v] for k, v in sorted(master_sum.items())])
+            for (bbox, text, prob) in results:
+                if prob < 0.2: continue
+                
+                # စာလုံးစု၏ ဘယ်ဘက်၊ ညာဘက် နှင့် အမြင့်ကို ယူခြင်း
+                x_min = bbox[0][0]
+                x_max = bbox[1][0]
+                y_center = np.mean([p[1] for p in bbox])
+                
+                r_idx = int(y_center / (h / num_rows))
+                
+                # စာသားအစုအဝေးက Column ဘယ်နှစ်ခုစာ ကျော်နေသလဲ စစ်ဆေးခြင်း
+                if 0 <= r_idx < num_rows:
+                    # စာလုံးက တစ်တိုင်ထက်ပိုကျော်နေရင် ခွဲထုတ်မည်
+                    words = text.split() if " " in text else [text]
+                    
+                    for i, part in enumerate(words):
+                        # စာလုံးတစ်လုံးချင်းစီရဲ့ ခန့်မှန်းခြေ x-position
+                        estimated_cx = x_min + (i * (x_max - x_min) / len(words))
+                        
+                        # ဘယ် Column ထဲ ကျသလဲ ရှာခြင်း
+                        c_idx = -1
+                        for b in range(num_cols_active):
+                            if col_bounds[b] <= estimated_cx < col_bounds[b+1]:
+                                c_idx = b
+                                break
+                        
+                        if c_idx != -1:
+                            txt = part.upper().strip()
+                            # Character Fixes
+                            repls = {'O':'0','I':'1','S':'5','G':'6','Z':'7','B':'8','A':'4','T':'7','L':'1'}
+                            for k, v in repls.items(): txt = txt.replace(k, v)
+                            
+                            # Clean based on Column Type
+                            if c_idx % 2 == 0: 
+                                txt = re.sub(r'[^0-9R]', '', txt)
+                            else: 
+                                txt = re.sub(r'[^0-9X*]', '', txt)
+                            
+                            # ဒေတာထည့်ခြင်း (ရှိပြီးသားဖြစ်ပါက ကော်မာခြား၍ ပေါင်းမည်)
+                            if grid_data[r_idx][c_idx] == "":
+                                grid_data[r_idx][c_idx] = txt
+                            else:
+                                # နံပါတ်တိုင်ဆိုလျှင် မပေါင်းဘဲ အသစ်ပဲယူမည်၊ ပမာဏဆိုလျှင် ပေါင်းမည်
+                                grid_data[r_idx][c_idx] = txt if c_idx % 2 == 0 else grid_data[r_idx][c_idx] + txt
 
-            # ၄။ Sheet 3 (Excess)
-            sh3 = ss.get_worksheet(2)
-            sh3.clear()
-            excess_rows = [[k, v - bet_limit] for k, v in master_sum.items() if v > bet_limit]
-            if excess_rows:
-                sh3.append_rows([["ဂဏန်း", "ပိုလျှံငွေ"]] + sorted(excess_rows))
-                st.success(f"✅ Sheet 1, 2, 3 အားလုံး အောင်မြင်စွာ ပို့ပြီးပါပြီ။")
-            else:
-                st.success("✅ Sheet 1, 2 ပို့ပြီးပါပြီ။ (ပိုလျှံဂဏန်း မရှိပါ)")
+            # Ditto (") Logic အပေါ်ကတန်ဖိုးယူခြင်း
+            for c in range(num_cols_active):
+                last_v = ""
+                for r in range(num_rows):
+                    curr = str(grid_data[r][c]).strip()
+                    if curr in ['"', "''", "v", "V", "11", "ll", "LL", "-", "Y", "4"] and last_v:
+                        grid_data[r][c] = last_v
+                    elif curr: last_v = curr
 
+            st.session_state['data_final'] = grid_data
+            st.rerun()
+            
         except Exception as e:
-            st.error(f"Sheet Error: {str(e)}")
+            st.error(f"OCR Error: {str(e)}")
