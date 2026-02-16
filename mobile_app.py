@@ -8,7 +8,7 @@ import gspread
 from itertools import permutations
 from oauth2client.service_account import ServiceAccountCredentials
 
-st.set_page_config(page_title="Lottery Pro 2026", layout="wide")
+st.set_page_config(page_title="Lottery PRO 2026", layout="wide")
 
 # ---------------- OCR ----------------
 @st.cache_resource
@@ -16,6 +16,14 @@ def load_ocr():
     return easyocr.Reader(['en'], gpu=False)
 
 reader = load_ocr()
+
+# ---------------- SETTINGS ----------------
+NUM_ROWS = 25
+NUM_COLS = 8
+
+st.title("🎰 Lottery OCR PRO (Cell-by-Cell Accurate Version)")
+uploaded_file = st.file_uploader("📥 လက်ရေးမူပုံတင်ရန်", type=["jpg","jpeg","png"])
+
 
 # ---------------- BET LOGIC ----------------
 def get_all_permutations(num_str):
@@ -30,13 +38,13 @@ def process_bet_logic(num_txt, amt_txt):
     results = {}
 
     if 'R' in clean_num:
-        base = clean_num.replace('R','')
-        perms = get_all_permutations(base)
+        base_num = clean_num.replace('R', '')
+        perms = get_all_permutations(base_num)
         amt = int(re.sub(r'\D','',amt_str)) if re.sub(r'\D','',amt_str) else 0
-        if perms and amt>0:
-            split = amt // len(perms)
+        if perms and amt > 0:
+            split_amt = amt // len(perms)
             for p in perms:
-                results[p]=split
+                results[p] = split_amt
 
     elif '*' in amt_str:
         parts = amt_str.split('*')
@@ -45,77 +53,78 @@ def process_bet_logic(num_txt, amt_txt):
             total_amt = int(parts[1])
             num_final = clean_num.zfill(3)
             results[num_final] = base_amt
-            perms = [p for p in get_all_permutations(num_final) if p!=num_final]
+            perms = [p for p in get_all_permutations(num_final) if p != num_final]
             if perms:
-                split = (total_amt-base_amt)//len(perms)
+                split_amt = (total_amt - base_amt)//len(perms)
                 for p in perms:
-                    results[p]=split
+                    results[p] = split_amt
     else:
         amt = int(re.sub(r'\D','',amt_str)) if re.sub(r'\D','',amt_str) else 0
         num_final = clean_num.zfill(3)
         if num_final:
-            results[num_final]=amt
+            results[num_final] = amt
 
     return results
 
-# ---------------- SETTINGS ----------------
-with st.sidebar:
-    st.header("⚙️ Settings")
-    num_rows = 25
-    num_cols_active = 8
-    st.success("Grid Locked: 25 x 8")
 
-st.title("🎰 Lottery OCR PRO (Cell Accurate)")
-
-uploaded_file = st.file_uploader("📥 ပုံတင်ရန်", type=["jpg","jpeg","png"])
-
+# ---------------- OCR PROCESS ----------------
 if uploaded_file:
+
     file_bytes = np.asarray(bytearray(uploaded_file.read()), dtype=np.uint8)
     img = cv2.imdecode(file_bytes, 1)
-
-    gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
-    gray = cv2.equalizeHist(gray)
 
     st.image(img, channels="BGR", use_container_width=True)
 
     if st.button("🔍 OCR Scan"):
+
         with st.spinner("Scanning..."):
 
-            h, w = gray.shape
-            col_width = w / num_cols_active
-            row_height = h / num_rows
+            h, w = img.shape[:2]
+            col_w = w / NUM_COLS
+            row_h = h / NUM_ROWS
 
-            grid_data = [["" for _ in range(num_cols_active)] for _ in range(num_rows)]
+            # Strong preprocessing
+            gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+            gray = cv2.equalizeHist(gray)
 
-            for r in range(num_rows):
-                for c in range(num_cols_active):
+            grid_data = [["" for _ in range(NUM_COLS)] for _ in range(NUM_ROWS)]
 
-                    x1 = int(c * col_width)
-                    x2 = int((c+1) * col_width)
-                    y1 = int(r * row_height)
-                    y2 = int((r+1) * row_height)
+            for r in range(NUM_ROWS):
+                for c in range(NUM_COLS):
+
+                    x1 = int(c * col_w)
+                    x2 = int((c+1) * col_w)
+                    y1 = int(r * row_h)
+                    y2 = int((r+1) * row_h)
 
                     cell = gray[y1:y2, x1:x2]
 
-                    # enlarge
+                    # enlarge for better OCR
                     cell = cv2.resize(cell, None, fx=2, fy=2, interpolation=cv2.INTER_CUBIC)
 
-                    # blur
-                    cell = cv2.GaussianBlur(cell,(3,3),0)
-
                     # adaptive threshold
-                    cell = cv2.adaptiveThreshold(
+                    cell_thresh = cv2.adaptiveThreshold(
                         cell,255,
                         cv2.ADAPTIVE_THRESH_GAUSSIAN_C,
-                        cv2.THRESH_BINARY,
-                        11,2)
+                        cv2.THRESH_BINARY,11,2)
 
-                    result = reader.readtext(cell, detail=0, paragraph=False)
+                    # OCR pass 1
+                    result1 = reader.readtext(cell_thresh, detail=0)
 
-                    txt = result[0] if result else ""
+                    # OCR pass 2 (invert)
+                    cell_inv = cv2.bitwise_not(cell_thresh)
+                    result2 = reader.readtext(cell_inv, detail=0)
+
+                    txt = ""
+
+                    if result1:
+                        txt = result1[0]
+                    elif result2:
+                        txt = result2[0]
+
                     txt = txt.upper().strip()
 
-                    # OCR correction
+                    # OCR corrections
                     txt = txt.replace('S','5')
                     txt = txt.replace('I','1')
                     txt = txt.replace('Z','7')
@@ -125,37 +134,46 @@ if uploaded_file:
                     txt = txt.replace('X','*')
                     txt = txt.replace('×','*')
 
+                    txt = re.sub(r'\.+','.',txt)
+
                     grid_data[r][c] = txt
 
-            # ---------- CLEANING ----------
-            for c in range(num_cols_active):
-                last_val=""
-                for r in range(num_rows):
-                    curr=str(grid_data[r][c]).strip()
+            # -------- CLEANING PHASE --------
+            for c in range(NUM_COLS):
+                last_val = ""
+                for r in range(NUM_ROWS):
 
-                    if c%2==0:
-                        curr=re.sub(r'[^0-9R]','',curr)
-                        if curr=="" and last_val:
-                            grid_data[r][c]=last_val
+                    curr = grid_data[r][c].strip()
+
+                    if c % 2 == 0:
+                        # Number column
+                        curr = re.sub(r'[^0-9R]', '', curr)
+
+                        if curr == "" and last_val:
+                            grid_data[r][c] = last_val
                         else:
                             if curr.isdigit():
-                                curr=curr[-3:].zfill(3)
-                            grid_data[r][c]=curr
+                                curr = curr[-3:].zfill(3)
+                            grid_data[r][c] = curr
                             if curr:
-                                last_val=curr
+                                last_val = curr
                     else:
-                        nums=re.findall(r'\d+',curr)
-                        grid_data[r][c]=max(nums,key=lambda x:int(x)) if nums else ""
+                        # Amount column
+                        nums = re.findall(r'\d+', curr)
+                        grid_data[r][c] = max(nums, key=lambda x: int(x)) if nums else ""
 
-            st.session_state['data_final']=grid_data
+            st.session_state["data_final"] = grid_data
+            st.success("✅ OCR Completed (200 Cells Processed)")
 
-# ---------------- UPLOAD ----------------
-if 'data_final' in st.session_state:
 
-    st.subheader("📝 စစ်ဆေးပြီး Upload")
-    edited_data = st.data_editor(st.session_state['data_final'], use_container_width=True)
+# ---------------- GOOGLE SHEET ----------------
+if "data_final" in st.session_state:
 
-    if st.button("🚀 Google Sheet Upload"):
+    st.subheader("📝 Edit & Upload")
+    edited_data = st.data_editor(st.session_state["data_final"], use_container_width=True)
+
+    if st.button("🚀 Upload to Google Sheet"):
+
         try:
             secret_info = json.loads(st.secrets["GCP_SERVICE_ACCOUNT_FILE"])
             secret_info["private_key"] = secret_info["private_key"].replace("\\n","\n")
@@ -174,19 +192,20 @@ if 'data_final' in st.session_state:
 
             sh1.append_rows(edited_data)
 
-            master_sum={}
+            master_sum = {}
+
             for row in edited_data:
-                for i in range(0,8,2):
-                    n_txt=str(row[i]).strip()
-                    a_txt=str(row[i+1]).strip()
+                for i in range(0, NUM_COLS, 2):
+                    n_txt = str(row[i]).strip()
+                    a_txt = str(row[i+1]).strip()
                     if n_txt and a_txt:
-                        bet_res=process_bet_logic(n_txt,a_txt)
+                        bet_res = process_bet_logic(n_txt, a_txt)
                         for g,val in bet_res.items():
-                            master_sum[g]=master_sum.get(g,0)+val
+                            master_sum[g] = master_sum.get(g,0)+val
 
             sh2.clear()
-            final_list=[[k,master_sum[k]] for k in sorted(master_sum.keys())]
-            sh2.append_rows([["ဂဏန်း","စုစုပေါင်း"]]+final_list)
+            final_list = [[k, master_sum[k]] for k in sorted(master_sum.keys())]
+            sh2.append_rows([["ဂဏန်း","စုစုပေါင်း"]] + final_list)
 
             st.success("🎉 Upload Complete!")
 
