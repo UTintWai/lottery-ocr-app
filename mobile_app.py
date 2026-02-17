@@ -137,6 +137,30 @@ if uploaded_file:
                     grid_data[r_idx][c_idx] = txt
 
             st.session_state['data_final'] = grid_data
+            for c in range(num_cols_active):
+                last_val = ""
+    for r in range(num_rows):
+        curr = str(grid_data[r][c]).strip().upper()
+
+        if c % 2 == 0:  # number columns
+            curr = re.sub(r'[^0-9R]', '', curr)
+            if curr.isdigit():
+                curr = curr[-3:].zfill(3)
+            if last_val and curr == last_val:
+                grid_data[r][c] = str(int(last_val) + int(curr))
+            else:
+                grid_data[r][c] = curr
+                if curr:
+                    last_val = curr
+        else:  # amount columns
+            nums = re.findall(r'\d+', curr)
+            curr = max(nums, key=lambda x: int(x)) if nums else ""
+            if (curr == "" or (curr.isdigit() and len(curr) <= 2)) and last_val:
+                grid_data[r][c] = last_val
+            else:
+                grid_data[r][c] = curr
+                if curr:
+                    last_val = curr
 
 # ---------------- GOOGLE SHEET ----------------
 if 'data_final' in st.session_state:
