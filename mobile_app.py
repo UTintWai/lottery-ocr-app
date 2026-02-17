@@ -1,153 +1,184 @@
 import streamlit as st
-import cv2
-import easyocr
 import numpy as np
-import pandas as pd
+import easyocr
+import cv2
 import re
-from PIL import Image
-import io
+import json
+import gspread
+from itertools import permutations
+from oauth2client.service_account import ServiceAccountCredentials
 
-st.title("Lottery OCR App")
+st.set_page_config(page_title="Lottery Pro 2026 Stable", layout="wide")
 
-# ----------------------
-# SETTINGS
-# ----------------------
-num_rows = 25
-num_cols = st.selectbox("Select Columns", [2,4,6,8], index=3)
-
-# ----------------------
-# LOAD OCR MODEL (CACHE)
-# ----------------------
+# ---------------- OCR ----------------
 @st.cache_resource
-def load_reader():
+def load_ocr():
     return easyocr.Reader(['en'], gpu=False)
 
-reader = load_reader()
+reader = load_ocr()
 
-# ----------------------
-# FILE UPLOAD
-# ----------------------
-uploaded_file = st.file_uploader("Upload Image", type=["jpg","png","jpeg"])
+# ---------------- PERMUTATION ----------------
+def get_all_permutations(num_str):
+    num_only = re.sub(r'\D', '', num_str)
+    if len(num_only) != 3:
+        return [num_only] if num_only else []
+    return sorted(list(set([''.join(p) for p in permutations(num_only)])))
 
-if uploaded_file is not None:
+# ---------------- BET LOGIC ----------------
+def process_bet_logic(num_txt, amt_txt):
+    clean_num = re.sub(r'[^0-9R]', '', str(num_txt).upper())
+    amt_str = str(amt_txt).upper().replace('X', '*')
+    results = {}
 
-    image = Image.open(uploaded_file)
-    img = np.array(image)
+    try:
+        if 'R' in clean_num:
+            base = clean_num.replace('R', '')
+            perms = get_all_permutations(base)
+            amt = int(re.sub(r'\D', '', amt_str)) if re.sub(r'\D', '', amt_str) else 0
+            if perms and amt > 0:
+                split = amt // len(perms)
+                for p in perms:
+                    results[p] = split
 
-    # Resize large image (RAM save)
-    h0, w0 = img.shape[:2]
-    max_width = 1200
-    if w0 > max_width:
-        scale = max_width / w0
-        img = cv2.resize(img, None, fx=scale, fy=scale)
+        elif '*' in amt_str:
+            parts = amt_str.split('*')
+            if len(parts) == 2 and parts[0].isdigit() and parts[1].isdigit():
+                base_amt = int(parts[0])
+                total_amt = int(parts[1])
+                num_final = clean_num.zfill(3)
+                results[num_final] = base_amt
+                perms = [p for p in get_all_permutations(num_final) if p != num_final]
+                if perms:
+                    split = (total_amt - base_amt) // len(perms)
+                    for p in perms:
+                        results[p] = split
+        else:
+            amt = int(re.sub(r'\D', '', amt_str)) if re.sub(r'\D', '', amt_str) else 0
+            num_final = clean_num.zfill(3) if clean_num.isdigit() else clean_num
+            if num_final:
+                results[num_final] = amt
+    except:
+        pass
 
-    gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+    return results
 
-    # ----------------------
-    # SAFE AUTO CROP SIDE MARGINS
-    # ----------------------
-    h_img, w_img = gray.shape
-    left_margin = int(w_img * 0.05)
-    right_margin = int(w_img * 0.95)
+# ---------------- SIDEBAR ----------------
+with st.sidebar:
+    st.header("⚙️ Settings")
+    num_rows = st.number_input("Rows", min_value=1, value=25)
+    num_cols_active = 8
 
-    if right_margin > left_margin:
-        gray = gray[:, left_margin:right_margin]
+st.title("🎰 Lottery OCR Ultra Stable 2026")
 
-    h, w = gray.shape
+uploaded_file = st.file_uploader("Upload Image", type=["jpg", "jpeg", "png"])
 
-    if num_cols <= 0:
-        st.error("Invalid column number")
-        st.stop()
+if uploaded_file:
+    file_bytes = np.asarray(bytearray(uploaded_file.read()), dtype=np.uint8)
+    img = cv2.imdecode(file_bytes, 1)
+    st.image(img, channels="BGR", use_container_width=True)
 
-    col_width = w / num_cols
-    row_height = h / num_rows
+    if st.button("🔍 OCR Scan"):
+        with st.spinner("Scanning 8 columns..."):
 
-    grid = []
-    last_bet_values = [""] * num_cols
+            gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
 
-    # ----------------------
-    # OCR LOOP
-    # ----------------------
-    for r in range(num_rows):
+            # CLAHE
+            clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
+            processed = clahe.apply(gray)
 
-        row_data = [""] * num_cols
+            # AUTO SIDE CROP
+            h, w = processed.shape
+            left = int(w * 0.05)
+            right = int(w * 0.95)
 
-        for c in range(num_cols):
+            if right > left:
+                processed = processed[:, left:right]
+                w = processed.shape[1]
 
-            x1 = int(c * col_width)
-            x2 = int((c + 1) * col_width)
-            y1 = int(r * row_height)
-            y2 = int((r + 1) * row_height)
+            col_width = w / 8
 
-            # SAFE BOUND CHECK
-            x1 = max(0, x1)
-            y1 = max(0, y1)
-            x2 = min(w, x2)
-            y2 = min(h, y2)
+            grid_data = [["" for _ in range(8)] for _ in range(num_rows)]
 
-            if x2 <= x1 or y2 <= y1:
-                continue
+            results = reader.readtext(
+                processed,
+                detail=1,
+                paragraph=False,
+                width_ths=0.7,
+                height_ths=0.7
+            )
 
-            cell = gray[y1:y2, x1:x2]
+            for (bbox, text, prob) in results:
 
-            if cell is None or cell.size == 0:
-                continue
+                if prob < 0.40:
+                    continue
 
-            cell = cv2.resize(cell, None, fx=1.4, fy=1.4)
-            cell = cv2.threshold(cell, 150, 255, cv2.THRESH_BINARY)[1]
+                cx = np.mean([p[0] for p in bbox])
+                cy = np.mean([p[1] for p in bbox])
 
-            result = reader.readtext(cell, detail=0, paragraph=False)
-            text = result[0].strip().upper() if result else ""
+                c_idx = int(cx / col_width)
+                r_idx = int((cy / h) * num_rows)
 
-            # OCR Fix
-            text = text.replace("O","0")
-            text = text.replace("S","5")
-            text = text.replace("I","1")
-            text = text.replace("Z","7")
-            text = text.replace("X","*")
-            text = text.replace("×","*")
+                if 0 <= r_idx < num_rows and 0 <= c_idx < 8:
 
-            # NUMBER COLUMN
-            if c % 2 == 0:
-                digits = re.sub(r'[^0-9]', '', text)
-                if len(digits) >= 3:
-                    row_data[c] = digits[-3:]
+                    txt = text.upper().strip()
 
-            # BET COLUMN
-            else:
-                if text == "" or "။" in text:
-                    row_data[c] = last_bet_values[c]
-                else:
-                    clean = re.sub(r'[^0-9*]', '', text)
-                    if clean != "":
-                        row_data[c] = clean
-                        last_bet_values[c] = clean
-                    else:
-                        row_data[c] = last_bet_values[c]
+                    repls = {
+                        'S': '5','G': '6','I': '1','Z': '7',
+                        'B': '8','O': '0','L': '1','T': '7',
+                        'Q': '0','D': '0'
+                    }
 
-        grid.append(row_data)
+                    for k, v in repls.items():
+                        txt = txt.replace(k, v)
 
-    # ----------------------
-    # SHOW RESULT
-    # ----------------------
-    columns = [f"Col{i+1}" for i in range(num_cols)]
-    df = pd.DataFrame(grid, columns=columns)
+                    if c_idx % 2 == 0:
+                        txt = re.sub(r'[^0-9R]', '', txt)
 
-    st.success("Finished OCR")
-    st.dataframe(df)
+                    grid_data[r_idx][c_idx] = txt
 
-    # ----------------------
-    # CREATE EXCEL IN MEMORY
-    # ----------------------
-    output = io.BytesIO()
-    with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
-        df.to_excel(writer, index=False, sheet_name='Sheet1')
+            st.session_state['data_final'] = grid_data
 
-    excel_data = output.getvalue()
+# ---------------- GOOGLE SHEET ----------------
+if 'data_final' in st.session_state:
 
-    st.download_button(
-        label="Download Excel",
-        data=excel_data,
-        file_name="output.xlsx",
-        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-    )
+    edited_data = st.data_editor(st.session_state['data_final'], use_container_width=True)
+
+    if st.button("🚀 Upload to Google Sheet"):
+        try:
+            secret_info = json.loads(st.secrets["GCP_SERVICE_ACCOUNT_FILE"])
+            secret_info["private_key"] = secret_info["private_key"].replace("\\n", "\n")
+
+            scope = [
+                "https://spreadsheets.google.com/feeds",
+                "https://www.googleapis.com/auth/drive"
+            ]
+
+            creds = ServiceAccountCredentials.from_json_keyfile_dict(secret_info, scope)
+            client = gspread.authorize(creds)
+
+            ss = client.open("LotteryData")
+            sh1 = ss.get_worksheet(0)
+            sh2 = ss.get_worksheet(1)
+
+            sh1.append_rows(edited_data)
+
+            master_sum = {}
+
+            for row in edited_data:
+                for i in range(0, 8, 2):
+                    n_txt = str(row[i]).strip()
+                    a_txt = str(row[i+1]).strip()
+
+                    if n_txt and a_txt:
+                        bet_res = process_bet_logic(n_txt, a_txt)
+                        for g, val in bet_res.items():
+                            master_sum[g] = master_sum.get(g, 0) + val
+
+            sh2.clear()
+            final_list = [[k, master_sum[k]] for k in sorted(master_sum.keys())]
+            sh2.append_rows([["Number", "Total"]] + final_list)
+
+            st.success("✅ Uploaded Successfully!")
+
+        except Exception as e:
+            st.error(f"Error: {str(e)}")
