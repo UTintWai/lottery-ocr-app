@@ -66,11 +66,12 @@ def process_bet_logic(num_txt, amt_txt):
 with st.sidebar:
     st.header("⚙️ Settings")
     num_rows = st.number_input("Rows", min_value=1, value=25)
-    num_cols_active = 8
+    col_mode = st.selectbox("Columns", ["2","4","6","8"], index=3)
+    num_cols_active = int(col_mode)
 
 st.title("🎰 Lottery OCR Ultra Stable 2026")
 
-uploaded_file = st.file_uploader("Upload Image", type=["jpg", "jpeg", "png"])
+uploaded_file = st.file_uploader("Upload Image", type=["jpg","jpeg","png"])
 
 if uploaded_file:
     file_bytes = np.asarray(bytearray(uploaded_file.read()), dtype=np.uint8)
@@ -78,66 +79,38 @@ if uploaded_file:
     st.image(img, channels="BGR", use_container_width=True)
 
     if st.button("🔍 OCR Scan"):
-        with st.spinner("Scanning 8 columns..."):
+        with st.spinner(f"Scanning {num_cols_active} columns..."):
 
             gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
-
-            # CLAHE
             clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
             processed = clahe.apply(gray)
 
-            # AUTO SIDE CROP
             h, w = processed.shape
-            left = int(w * 0.05)
-            right = int(w * 0.95)
+            col_width = w / num_cols_active
 
-            if right > left:
-                processed = processed[:, left:right]
-                w = processed.shape[1]
+            grid_data = [["" for _ in range(num_cols_active)] for _ in range(num_rows)]
 
-            col_width = w / 8
-
-            grid_data = [["" for _ in range(8)] for _ in range(num_rows)]
-
-            results = reader.readtext(
-                processed,
-                detail=1,
-                paragraph=False,
-                width_ths=0.7,
-                height_ths=0.7
-            )
+            results = reader.readtext(processed, detail=1, paragraph=False, width_ths=0.7, height_ths=0.7)
 
             for (bbox, text, prob) in results:
-
                 if prob < 0.40:
                     continue
-
                 cx = np.mean([p[0] for p in bbox])
                 cy = np.mean([p[1] for p in bbox])
 
                 c_idx = int(cx / col_width)
                 r_idx = int((cy / h) * num_rows)
 
-                if 0 <= r_idx < num_rows and 0 <= c_idx < 8:
-
+                if 0 <= r_idx < num_rows and 0 <= c_idx < num_cols_active:
                     txt = text.upper().strip()
-
-                    repls = {
-                        'S': '5','G': '6','I': '1','Z': '7',
-                        'B': '8','O': '0','L': '1','T': '7',
-                        'Q': '0','D': '0'
-                    }
-
-                    for k, v in repls.items():
-                        txt = txt.replace(k, v)
-
+                    repls = {'S':'5','G':'6','I':'1','Z':'7','B':'8','O':'0','L':'1','T':'7','Q':'0','D':'0'}
+                    for k,v in repls.items():
+                        txt = txt.replace(k,v)
                     if c_idx % 2 == 0:
                         txt = re.sub(r'[^0-9R]', '', txt)
-
                     grid_data[r_idx][c_idx] = txt
 
-            st.session_state['data_final'] = grid_data
-
+            # Ditto + Number/Amount Logic
             for c in range(num_cols_active):
                 last_val = ""
                 for r in range(num_rows):
@@ -160,34 +133,20 @@ if uploaded_file:
                             grid_data[r][c] = last_val
                         else:
                             grid_data[r][c] = curr
-                        if curr:
-                            last_val = curr
+                            if curr:
+                                last_val = curr
 
-                else:  # amount columns
-                    nums = re.findall(r'\d+', curr)
-                    curr = max(nums, key=lambda x: int(x)) if nums else ""
-                    if (curr == "" or (curr.isdigit() and len(curr) <= 2)) and last_val:
-                        grid_data[r][c] = last_val
-                    else:
-                        grid_data[r][c] = curr
-                        if curr:
-                            last_val = curr
+            st.session_state['data_final'] = grid_data
 
 # ---------------- GOOGLE SHEET ----------------
 if 'data_final' in st.session_state:
-
     edited_data = st.data_editor(st.session_state['data_final'], use_container_width=True)
 
     if st.button("🚀 Upload to Google Sheet"):
         try:
             secret_info = json.loads(st.secrets["GCP_SERVICE_ACCOUNT_FILE"])
-            secret_info["private_key"] = secret_info["private_key"].replace("\\n", "\n")
-
-            scope = [
-                "https://spreadsheets.google.com/feeds",
-                "https://www.googleapis.com/auth/drive"
-            ]
-
+            secret_info["private_key"] = secret_info["private_key"].replace("\\n","\n")
+            scope = ["https://spreadsheets.google.com/feeds","https://www.googleapis.com/auth/drive"]
             creds = ServiceAccountCredentials.from_json_keyfile_dict(secret_info, scope)
             client = gspread.authorize(creds)
 
@@ -198,22 +157,19 @@ if 'data_final' in st.session_state:
             sh1.append_rows(edited_data)
 
             master_sum = {}
-
             for row in edited_data:
-                for i in range(0, 8, 2):
+                for i in range(0, num_cols_active, 2):
                     n_txt = str(row[i]).strip()
                     a_txt = str(row[i+1]).strip()
-
                     if n_txt and a_txt:
                         bet_res = process_bet_logic(n_txt, a_txt)
-                        for g, val in bet_res.items():
-                            master_sum[g] = master_sum.get(g, 0) + val
+                        for g,val in bet_res.items():
+                            master_sum[g] = master_sum.get(g,0)+val
 
             sh2.clear()
             final_list = [[k, master_sum[k]] for k in sorted(master_sum.keys())]
-            sh2.append_rows([["Number", "Total"]] + final_list)
+            sh2.append_rows([["Number","Total"]] + final_list)
 
             st.success("✅ Uploaded Successfully!")
-
         except Exception as e:
             st.error(f"Error: {str(e)}")
