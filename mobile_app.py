@@ -115,10 +115,21 @@ if uploaded_file:
                 if c_idx % 2 == 0:
                     txt = re.sub(r'[^0-9R]', '', txt)
                 grid_data[r_idx][c_idx] = txt
+            proj = np.sum(processed, axis=0)
+            threshold = np.mean(proj)
+            peaks = np.where(proj > threshold)[0]
 
-        # ✅ Ditto + Number/Amount Logic
-        for c in range(num_cols_active):
-            last_val = ""
+            # cluster peaks into column groups
+            col_clusters = np.unique(np.round(peaks / (w/8)))
+            num_cols_active = len(col_clusters)
+            st.write("OCR Raw Results:", results)
+
+            col_width = w / num_cols_active
+            grid_data = [["" for _ in range(num_cols_active)] for _ in range(num_rows)]
+
+            # ✅ Ditto + Number/Amount Logic
+            for c in range(num_cols_active):
+                last_val = ""
             for r in range(num_rows):
                 curr = str(grid_data[r][c]).strip().upper()
                 if c % 2 == 0:  # number columns
@@ -135,11 +146,11 @@ if uploaded_file:
                     grid_data[r][c] = last_val
                 else:
                     grid_data[r][c] = curr
-            if curr:
-                last_val = curr
-            else:  # amount columns
-                    nums = re.findall(r'\d+', curr)
-                    curr = max(nums, key=lambda x: int(x)) if nums else ""
+                    if curr:
+                        last_val = curr
+                    else:  # amount columns
+                        nums = re.findall(r'\d+', curr)
+                        curr = max(nums, key=lambda x: int(x)) if nums else ""
                     if (curr == "" or (curr.isdigit() and len(curr) <= 2)) and last_val:
                         grid_data[r][c] = last_val
                     else:
@@ -148,9 +159,7 @@ if uploaded_file:
                             last_val = curr
 
         st.session_state['data_final'] = grid_data
-
-
-
+        
 # ---------------- GOOGLE SHEET ----------------
 if 'data_final' in st.session_state:
     edited_data = st.data_editor(st.session_state['data_final'], use_container_width=True)
