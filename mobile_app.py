@@ -80,7 +80,6 @@ if uploaded_file:
 
     if st.button("🔍 OCR Scan"):
         with st.spinner(f"Scanning {num_cols_active} columns..."):
-
             gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
         clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
         processed = clahe.apply(gray)
@@ -125,11 +124,20 @@ if uploaded_file:
                 if c % 2 == 0:  # number columns
                     curr = re.sub(r'[^0-9R]', '', curr)
                     if curr.isdigit():
-                        curr = curr.zfill(3)   # ✅ triple-digit pad
+                        curr = curr.zfill(3)
+                        grid_data[r][c] = curr if curr else last_val
+                        if curr:
+                            last_val = curr
+                        else:  # amount columns
+                            nums = re.findall(r'\d+', curr)
+                            curr = max(nums, key=lambda x: int(x)) if nums else ""
+                if not curr and last_val:
+                    grid_data[r][c] = last_val
+                else:
                     grid_data[r][c] = curr
-                    if curr:
-                        last_val = curr
-                else:  # amount columns
+            if curr:
+                last_val = curr
+            else:  # amount columns
                     nums = re.findall(r'\d+', curr)
                     curr = max(nums, key=lambda x: int(x)) if nums else ""
                     if (curr == "" or (curr.isdigit() and len(curr) <= 2)) and last_val:
