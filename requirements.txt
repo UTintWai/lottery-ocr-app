@@ -4,4 +4,3 @@ easyocr
 numpy
 pandas
 Pillow
-xlsxwriter
