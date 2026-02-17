@@ -43,7 +43,22 @@ if uploaded_file is not None:
 
     gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
 
+    # ----------------------
+    # SAFE AUTO CROP SIDE MARGINS
+    # ----------------------
+    h_img, w_img = gray.shape
+    left_margin = int(w_img * 0.05)
+    right_margin = int(w_img * 0.95)
+
+    if right_margin > left_margin:
+        gray = gray[:, left_margin:right_margin]
+
     h, w = gray.shape
+
+    if num_cols <= 0:
+        st.error("Invalid column number")
+        st.stop()
+
     col_width = w / num_cols
     row_height = h / num_rows
 
@@ -64,9 +79,18 @@ if uploaded_file is not None:
             y1 = int(r * row_height)
             y2 = int((r + 1) * row_height)
 
+            # SAFE BOUND CHECK
+            x1 = max(0, x1)
+            y1 = max(0, y1)
+            x2 = min(w, x2)
+            y2 = min(h, y2)
+
+            if x2 <= x1 or y2 <= y1:
+                continue
+
             cell = gray[y1:y2, x1:x2]
 
-            if cell.size == 0:
+            if cell is None or cell.size == 0:
                 continue
 
             cell = cv2.resize(cell, None, fx=1.4, fy=1.4)
