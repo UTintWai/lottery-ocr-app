@@ -5,6 +5,7 @@ import numpy as np
 import pandas as pd
 import re
 from PIL import Image
+import io
 
 st.title("Lottery OCR App")
 
@@ -68,7 +69,6 @@ if uploaded_file is not None:
             if cell.size == 0:
                 continue
 
-            # Light preprocessing (RAM save)
             cell = cv2.resize(cell, None, fx=1.4, fy=1.4)
             cell = cv2.threshold(cell, 150, 255, cv2.THRESH_BINARY)[1]
 
@@ -112,8 +112,18 @@ if uploaded_file is not None:
     st.success("Finished OCR")
     st.dataframe(df)
 
+    # ----------------------
+    # CREATE EXCEL IN MEMORY
+    # ----------------------
+    output = io.BytesIO()
+    with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
+        df.to_excel(writer, index=False, sheet_name='Sheet1')
+
+    excel_data = output.getvalue()
+
     st.download_button(
-        "Download Excel",
-        df.to_excel(index=False),
-        file_name="output.xlsx"
+        label="Download Excel",
+        data=excel_data,
+        file_name="output.xlsx",
+        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
     )
