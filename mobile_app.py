@@ -86,8 +86,8 @@ if uploaded_file:
             processed = clahe.apply(gray)
 
             h, w = processed.shape
-col_width = w / num_cols_active
-grid_data = [["" for _ in range(num_cols_active)] for _ in range(num_rows)]
+            col_width = w / num_cols_active   # ✅ အမှန်
+            grid_data = [["" for _ in range(num_cols_active)] for _ in range(num_rows)]
 
 results = reader.readtext(
     processed,
