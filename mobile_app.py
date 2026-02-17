@@ -1,116 +1,119 @@
+import streamlit as st
 import cv2
 import easyocr
 import numpy as np
 import pandas as pd
 import re
-import os
+from PIL import Image
+
+st.title("Lottery OCR App")
 
 # ----------------------
 # SETTINGS
 # ----------------------
-image_path = "input.jpg"     # <-- ဒီနေရာမှာ သင့်ပုံနာမည်ထည့်ပါ
 num_rows = 25
-num_cols = 8                 # 2 / 4 / 6 / 8 ပြောင်းနိုင်ပါတယ်
+num_cols = st.selectbox("Select Columns", [2,4,6,8], index=3)
 
 # ----------------------
-# CHECK FILE EXISTS
+# LOAD OCR MODEL (CACHE)
 # ----------------------
-if not os.path.exists(image_path):
-    print("❌ Image file not found. Check image_path.")
-    exit()
+@st.cache_resource
+def load_reader():
+    return easyocr.Reader(['en'], gpu=False)
 
-# ----------------------
-# LOAD IMAGE SAFE
-# ----------------------
-img = cv2.imread(image_path)
-
-if img is None:
-    print("❌ Failed to load image.")
-    exit()
-
-gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+reader = load_reader()
 
 # ----------------------
-# INIT OCR
+# FILE UPLOAD
 # ----------------------
-reader = easyocr.Reader(['en'], gpu=False)
+uploaded_file = st.file_uploader("Upload Image", type=["jpg","png","jpeg"])
 
-h, w = gray.shape
-col_width = w / num_cols
-row_height = h / num_rows
+if uploaded_file is not None:
 
-grid = []
-last_bet_values = [""] * num_cols
+    image = Image.open(uploaded_file)
+    img = np.array(image)
 
-# ----------------------
-# CELL BY CELL OCR
-# ----------------------
-for r in range(num_rows):
+    # Resize large image (RAM save)
+    h0, w0 = img.shape[:2]
+    max_width = 1200
+    if w0 > max_width:
+        scale = max_width / w0
+        img = cv2.resize(img, None, fx=scale, fy=scale)
 
-    row_data = [""] * num_cols
+    gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
 
-    for c in range(num_cols):
+    h, w = gray.shape
+    col_width = w / num_cols
+    row_height = h / num_rows
 
-        x1 = int(c * col_width)
-        x2 = int((c + 1) * col_width)
-        y1 = int(r * row_height)
-        y2 = int((r + 1) * row_height)
+    grid = []
+    last_bet_values = [""] * num_cols
 
-        cell = gray[y1:y2, x1:x2]
+    # ----------------------
+    # OCR LOOP
+    # ----------------------
+    for r in range(num_rows):
 
-        if cell.size == 0:
-            continue
+        row_data = [""] * num_cols
 
-        # Preprocessing
-        cell = cv2.resize(cell, None, fx=2, fy=2, interpolation=cv2.INTER_CUBIC)
-        cell = cv2.GaussianBlur(cell, (3,3), 0)
-        cell = cv2.adaptiveThreshold(
-            cell, 255,
-            cv2.ADAPTIVE_THRESH_GAUSSIAN_C,
-            cv2.THRESH_BINARY,
-            11, 2
-        )
+        for c in range(num_cols):
 
-        result = reader.readtext(cell, detail=0)
-        text = result[0].strip().upper() if result else ""
+            x1 = int(c * col_width)
+            x2 = int((c + 1) * col_width)
+            y1 = int(r * row_height)
+            y2 = int((r + 1) * row_height)
 
-        # OCR Common Fix
-        text = text.replace("O","0")
-        text = text.replace("S","5")
-        text = text.replace("I","1")
-        text = text.replace("Z","7")
-        text = text.replace("X","*")
-        text = text.replace("×","*")
+            cell = gray[y1:y2, x1:x2]
 
-        # ----------------------
-        # NUMBER COLUMN
-        # ----------------------
-        if c % 2 == 0:
-            digits = re.sub(r'[^0-9]', '', text)
-            if len(digits) >= 3:
-                row_data[c] = digits[-3:]
+            if cell.size == 0:
+                continue
 
-        # ----------------------
-        # BET COLUMN
-        # ----------------------
-        else:
-            if text == "" or "။" in text:
-                row_data[c] = last_bet_values[c]
+            # Light preprocessing (RAM save)
+            cell = cv2.resize(cell, None, fx=1.4, fy=1.4)
+            cell = cv2.threshold(cell, 150, 255, cv2.THRESH_BINARY)[1]
+
+            result = reader.readtext(cell, detail=0, paragraph=False)
+            text = result[0].strip().upper() if result else ""
+
+            # OCR Fix
+            text = text.replace("O","0")
+            text = text.replace("S","5")
+            text = text.replace("I","1")
+            text = text.replace("Z","7")
+            text = text.replace("X","*")
+            text = text.replace("×","*")
+
+            # NUMBER COLUMN
+            if c % 2 == 0:
+                digits = re.sub(r'[^0-9]', '', text)
+                if len(digits) >= 3:
+                    row_data[c] = digits[-3:]
+
+            # BET COLUMN
             else:
-                clean = re.sub(r'[^0-9*]', '', text)
-                if clean != "":
-                    row_data[c] = clean
-                    last_bet_values[c] = clean
-                else:
+                if text == "" or "။" in text:
                     row_data[c] = last_bet_values[c]
+                else:
+                    clean = re.sub(r'[^0-9*]', '', text)
+                    if clean != "":
+                        row_data[c] = clean
+                        last_bet_values[c] = clean
+                    else:
+                        row_data[c] = last_bet_values[c]
 
-    grid.append(row_data)
+        grid.append(row_data)
 
-# ----------------------
-# SAVE TO EXCEL
-# ----------------------
-columns = [f"Col{i+1}" for i in range(num_cols)]
-df = pd.DataFrame(grid, columns=columns)
-df.to_excel("output.xlsx", index=False)
+    # ----------------------
+    # SHOW RESULT
+    # ----------------------
+    columns = [f"Col{i+1}" for i in range(num_cols)]
+    df = pd.DataFrame(grid, columns=columns)
 
-print("✅ Finished! Saved as output.xlsx")
+    st.success("Finished OCR")
+    st.dataframe(df)
+
+    st.download_button(
+        "Download Excel",
+        df.to_excel(index=False),
+        file_name="output.xlsx"
+    )
