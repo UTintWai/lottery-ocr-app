@@ -1,7 +1,7 @@
 streamlit
-easyocr
-gspread
-oauth2client
 opencv-python-headless
+easyocr
 numpy
+pandas
 Pillow
+xlsxwriter
