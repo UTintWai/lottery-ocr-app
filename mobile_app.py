@@ -62,11 +62,14 @@ def process_bet_logic(num_txt, amt_txt):
 
     return results
 uploaded_file = st.file_uploader("Upload Voucher Image", type=["jpg","jpeg","png"])
+
 # ---------------- SIDEBAR ----------------
 with st.sidebar:
     st.header("⚙️ Settings")
     num_rows = st.number_input("Rows", min_value=1, value=25)
     col_mode = st.selectbox("Columns (Manual Override)", ["Auto Detect","2","4","6","8"], index=0)
+
+...
 
 if uploaded_file:
     file_bytes = np.asarray(bytearray(uploaded_file.read()), dtype=np.uint8)
@@ -117,7 +120,14 @@ if uploaded_file:
 
             st.success(f"🔎 Columns Used: {num_cols_active}")
 
-            # OCR READ + Ditto Logic
+            # OCR fixes dictionary
+            repls = {
+                'S':'5','G':'6','I':'1','Z':'7',
+                'B':'8','O':'0','L':'1','T':'7',
+                'Q':'0','D':'0'
+            }
+
+            # OCR READ
             results = reader.readtext(processed, detail=1, paragraph=False)
             for (bbox, text, prob) in results:
                 if prob < 0.40: continue
@@ -127,9 +137,8 @@ if uploaded_file:
                 r_idx = int((cy / h) * num_rows)
                 if 0 <= r_idx < num_rows and 0 <= c_idx < num_cols_active:
                     txt = text.upper().strip()
-                    # OCR fixes...
-                    repls = {'S':'5','G':'6','I':'1','Z':'7','B':'8','O':'0','L':'1','T':'7','Q':'0','D':'0'}
-                    for k,v in repls.items(): txt = txt.replace(k,v)
+                    for k,v in repls.items():
+                        txt = txt.replace(k,v)
                     if c_idx % 2 == 0:
                         txt = re.sub(r'[^0-9R]', '', txt)
                     else:
@@ -138,30 +147,22 @@ if uploaded_file:
                     grid_data[r_idx][c_idx] = txt
 
             # Ditto Logic
-            # After OCR mapping
-for c in range(num_cols_active):
-    last_val = ""
-    for r in range(num_rows):
-        curr = str(grid_data[r][c]).strip()
-
-        if c % 2 == 0:  # number column
-            curr = re.sub(r'[^0-9R]', '', curr)
-            if curr.isdigit():
-                curr = curr.zfill(3)
-
-            # prevent duplicate above/below
-            if r > 0 and curr == grid_data[r-1][c]:
-                curr = ""  # clear duplicate
-            grid_data[r][c] = curr if curr else last_val
-            if curr:
-                last_val = curr
-
-        else:  # amount column
-            nums = re.findall(r'\d+', curr)
-            curr = max(nums, key=lambda x: int(x)) if nums else ""
-            grid_data[r][c] = curr if curr else last_val
-            if curr:
-                last_val = curr
+            for c in range(num_cols_active):
+                last_val = ""
+                for r in range(num_rows):
+                    curr = str(grid_data[r][c]).strip()
+                    if c % 2 == 0:  # number column
+                        curr = re.sub(r'[^0-9R]', '', curr)
+                        if curr.isdigit():
+                            curr = curr.zfill(3)
+                        if r > 0 and curr == grid_data[r-1][c]:
+                            curr = ""  # clear duplicate
+                    else:  # amount column
+                        nums = re.findall(r'\d+', curr)
+                        curr = max(nums, key=lambda x: int(x)) if nums else ""
+                    grid_data[r][c] = curr if curr else last_val
+                    if curr:
+                        last_val = curr
 
             st.session_state['data_final'] = grid_data
             st.session_state['num_cols'] = num_cols_active
