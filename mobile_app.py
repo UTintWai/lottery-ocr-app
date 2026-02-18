@@ -62,6 +62,24 @@ def process_bet_logic(num_txt, amt_txt):
 
     return results
 uploaded_file = st.file_uploader("Upload Voucher Image", type=["jpg","jpeg","png"])
+# ---------------- OCR NORMALIZE ----------------
+def clean_ocr_text(txt):
+    txt = txt.upper().strip()
+
+    # Remove .png / PNG / .PNG etc
+    txt = re.sub(r'\.?\s*PNG', '', txt)
+
+    # Fix common OCR mistakes
+    repls = {
+        'O':'0','I':'1','L':'1','S':'5',
+        'B':'8','G':'6','Z':'7','T':'7',
+        'Q':'0','D':'0'
+    }
+
+    for k,v in repls.items():
+        txt = txt.replace(k,v)
+
+    return txt
 
 # ---------------- SIDEBAR ----------------
 with st.sidebar:
@@ -129,26 +147,36 @@ if uploaded_file:
             }
             
             # OCR READ
-            results = reader.readtext(processed, detail=1, paragraph=False)
-            for (bbox, text, prob) in results:
-                if prob < 0.40: continue
-                cx = np.mean([p[0] for p in bbox])
-                cy = np.mean([p[1] for p in bbox])
-                c_idx = int(cx / col_width)
-                r_idx = int((cy / h) * num_rows)
-                if 0 <= r_idx < num_rows and 0 <= c_idx < num_cols_active:
-                    txt = text.upper().strip()
-                    for k,v in repls.items():
-                        txt = txt.replace(k,v)
-                    if c_idx % 2 == 0:
-                        txt = re.sub(r'[^0-9R]', '', txt)
-                    else:
-                        nums = re.findall(r'\d+', txt)
-                        txt = max(nums, key=lambda x: int(x)) if nums else ""
-                    grid_data[r_idx][c_idx] = txt
+results = reader.readtext(processed, detail=1, paragraph=False)
+
+for (bbox, text, prob) in results:
+    if prob < 0.40:
+        continue
+
+    cx = np.mean([p[0] for p in bbox])
+    cy = np.mean([p[1] for p in bbox])
+
+    c_idx = int(cx / col_width)
+    r_idx = int((cy / h) * num_rows)
+
+    if 0 <= r_idx < num_rows and 0 <= c_idx < num_cols_active:
+
+        txt = clean_ocr_text(text)
+
+        # NUMBER COLUMN
+        if c_idx % 2 == 0:
+            nums = re.findall(r'\d+', txt)
+            txt = nums[0].zfill(3) if nums else ""
+
+        # AMOUNT COLUMN
+        else:
+            nums = re.findall(r'\d+', txt)
+            txt = max(nums, key=lambda x: int(x)) if nums else ""
+
+        grid_data[r_idx][c_idx] = txt
 
             # Ditto Logic
-            for c in range(num_cols_active):
+        for c in range(num_cols_active):
                 last_val = ""
                 for r in range(num_rows):
                     curr = str(grid_data[r][c]).strip()
@@ -170,8 +198,8 @@ if uploaded_file:
                     if curr:
                         last_val = curr
 
-            st.session_state['data_final'] = grid_data
-            st.session_state['num_cols'] = num_cols_active
+        st.session_state['data_final'] = grid_data
+        st.session_state['num_cols'] = num_cols_active
 
 # ---------------- GOOGLE SHEET ----------------
 if 'data_final' in st.session_state:
