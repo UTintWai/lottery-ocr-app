@@ -61,111 +61,95 @@ def process_bet_logic(num_txt, amt_txt):
         pass
 
     return results
-
-
+uploaded_file = st.file_uploader("Upload Voucher Image", type=["jpg","jpeg","png"])
 # ---------------- SIDEBAR ----------------
 with st.sidebar:
     st.header("⚙️ Settings")
     num_rows = st.number_input("Rows", min_value=1, value=25)
     col_mode = st.selectbox("Columns (Manual Override)", ["Auto Detect","2","4","6","8"], index=0)
 
-...
+if uploaded_file:
+    file_bytes = np.asarray(bytearray(uploaded_file.read()), dtype=np.uint8)
+    img = cv2.imdecode(file_bytes, 1)
+    st.image(img, channels="BGR", use_container_width=True)
 
-if st.button("🔍 OCR Scan"):
-    with st.spinner("Scanning & Auto Detecting Columns..."):
+    if st.button("🔍 OCR Scan"):
+        with st.spinner("Scanning & Auto Detecting Columns..."):
 
-        gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY) # type: ignore
-        clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
-        processed = clahe.apply(gray)
+            gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+            clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
+            processed = clahe.apply(gray)
 
-        h, w = processed.shape
+            h, w = processed.shape
 
-        # AUTO DETECT
-        proj = np.sum(processed, axis=0)
-        threshold = np.percentile(proj, 75)
-        text_mask = proj < threshold
-        col_indices = np.where(text_mask)[0]
+            # AUTO DETECT
+            proj = np.sum(processed, axis=0)
+            threshold = np.percentile(proj, 75)
+            text_mask = proj < threshold
+            col_indices = np.where(text_mask)[0]
 
-        clusters = []
-        if len(col_indices) > 0:
-            current_cluster = [col_indices[0]]
-            gap_limit = w // 20
-            for idx in col_indices[1:]:
-                if idx - current_cluster[-1] < gap_limit:
-                    current_cluster.append(idx)
-                else:
-                    clusters.append(current_cluster)
-                    current_cluster = [idx]
-            clusters.append(current_cluster)
+            clusters = []
+            if len(col_indices) > 0:
+                current_cluster = [col_indices[0]]
+                gap_limit = w // 20
+                for idx in col_indices[1:]:
+                    if idx - current_cluster[-1] < gap_limit:
+                        current_cluster.append(idx)
+                    else:
+                        clusters.append(current_cluster)
+                        current_cluster = [idx]
+                clusters.append(current_cluster)
 
-        num_cols_detected = len(clusters)
-        if num_cols_detected < 6:
-            num_cols_detected = 6
-        elif num_cols_detected > 8:
-            num_cols_detected = 8
+            num_cols_detected = len(clusters)
+            if num_cols_detected < 6:
+                num_cols_detected = 6
+            elif num_cols_detected > 8:
+                num_cols_detected = 8
 
-        # Manual override
-        if col_mode != "Auto Detect":
-            num_cols_active = int(col_mode)
-        else:
-            num_cols_active = num_cols_detected
+            # Manual override
+            if col_mode != "Auto Detect":
+                num_cols_active = int(col_mode)
+            else:
+                num_cols_active = num_cols_detected
 
-        col_width = w / num_cols_active
-        grid_data = [["" for _ in range(num_cols_active)] for _ in range(num_rows)]
+            col_width = w / num_cols_active
+            grid_data = [["" for _ in range(num_cols_active)] for _ in range(num_rows)]
 
-        st.success(f"🔎 Columns Used: {num_cols_active}")
+            st.success(f"🔎 Columns Used: {num_cols_active}")
 
-        # ---------------- OCR READ ----------------
-        results = reader.readtext(
-            processed,
-            detail=1,
-            paragraph=False
-        )
-        for (bbox, text, prob) in results:
-                if prob < 0.40:
-                    continue
-
+            # OCR READ + Ditto Logic
+            results = reader.readtext(processed, detail=1, paragraph=False)
+            for (bbox, text, prob) in results:
+                if prob < 0.40: continue
                 cx = np.mean([p[0] for p in bbox])
                 cy = np.mean([p[1] for p in bbox])
-
                 c_idx = int(cx / col_width)
                 r_idx = int((cy / h) * num_rows)
-
                 if 0 <= r_idx < num_rows and 0 <= c_idx < num_cols_active:
-
                     txt = text.upper().strip()
-
-                    repls = {
-                        'S':'5','G':'6','I':'1','Z':'7',
-                        'B':'8','O':'0','L':'1','T':'7',
-                        'Q':'0','D':'0'
-                    }
-
-                    for k,v in repls.items():
-                        txt = txt.replace(k,v)
-
+                    # OCR fixes...
+                    repls = {'S':'5','G':'6','I':'1','Z':'7','B':'8','O':'0','L':'1','T':'7','Q':'0','D':'0'}
+                    for k,v in repls.items(): txt = txt.replace(k,v)
                     if c_idx % 2 == 0:
                         txt = re.sub(r'[^0-9R]', '', txt)
                     else:
                         nums = re.findall(r'\d+', txt)
                         txt = max(nums, key=lambda x: int(x)) if nums else ""
-
                     grid_data[r_idx][c_idx] = txt
 
-            # ---------------- DITTO LOGIC ----------------
-                for c in range(num_cols_active):
-                    last_val = ""
+            # Ditto Logic
+            for c in range(num_cols_active):
+                last_val = ""
                 for r in range(num_rows):
                     curr = str(grid_data[r][c]).strip()
-
                     if curr:
                         last_val = curr
                         grid_data[r][c] = curr
                     else:
                         grid_data[r][c] = last_val
 
-                st.session_state['data_final'] = grid_data
-                st.session_state['num_cols'] = num_cols_active
+            st.session_state['data_final'] = grid_data
+            st.session_state['num_cols'] = num_cols_active
 
 # ---------------- GOOGLE SHEET ----------------
 if 'data_final' in st.session_state:
