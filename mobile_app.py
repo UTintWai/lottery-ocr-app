@@ -80,51 +80,50 @@ if uploaded_file:
 
     if st.button("🔍 OCR Scan"):
         with st.spinner("Scanning & Auto Detecting Columns..."):
-
             gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
             clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
             processed = clahe.apply(gray)
-
             h, w = processed.shape
+        # ---------------- AUTO COLUMN DETECT ----------------
+        proj = np.sum(processed, axis=0)
+        threshold = np.percentile(proj, 75)
+        text_mask = proj < threshold
+        col_indices = np.where(text_mask)[0]
 
-            # ---------------- AUTO COLUMN DETECT ----------------
-            proj = np.sum(processed, axis=0)
-            proj_norm = proj / np.max(proj)
+        clusters = []
+        if len(col_indices) > 0:
+            current_cluster = [col_indices[0]]
+            gap_limit = w // 20
 
-            text_mask = proj_norm < 0.92
-            col_indices = np.where(text_mask)[0]
+            for idx in col_indices[1:]:
+                if idx - current_cluster[-1] < gap_limit:
+                    current_cluster.append(idx)
+                else:
+                    clusters.append(current_cluster)
+                    current_cluster = [idx]
 
-            clusters = []
-            if len(col_indices) > 0:
-                current_cluster = [col_indices[0]]
+            clusters.append(current_cluster)
 
-                for idx in col_indices[1:]:
-                    if idx - current_cluster[-1] < 20:
-                        current_cluster.append(idx)
-                    else:
-                        clusters.append(current_cluster)
-                        current_cluster = [idx]
+        num_cols_active = len(clusters)
 
-                clusters.append(current_cluster)
+        # Clamp result to 6–8 columns only
+        if num_cols_active < 6:
+            num_cols_active = 6
+        elif num_cols_active > 8:
+            num_cols_active = 8
 
-            num_cols_active = len(clusters)
-            if num_cols_active == 0:
-                num_cols_active = 2  # fallback safety
+        col_width = w / num_cols_active
+        grid_data = [["" for _ in range(num_cols_active)] for _ in range(num_rows)]
 
-            col_width = w / num_cols_active
+        st.success(f"🔎 Auto Detected Columns: {num_cols_active}")
 
-            st.success(f"🔎 Auto Detected Columns: {num_cols_active}")
-
-            grid_data = [["" for _ in range(num_cols_active)] for _ in range(num_rows)]
-
-            # ---------------- OCR READ ----------------
-            results = reader.readtext(
-                processed,
-                detail=1,
-                paragraph=False
-            )
-
-            for (bbox, text, prob) in results:
+        # ---------------- OCR READ ----------------
+        results = reader.readtext(
+            processed,
+            detail=1,
+            paragraph=False
+        )
+        for (bbox, text, prob) in results:
                 if prob < 0.40:
                     continue
 
@@ -156,8 +155,8 @@ if uploaded_file:
                     grid_data[r_idx][c_idx] = txt
 
             # ---------------- DITTO LOGIC ----------------
-            for c in range(num_cols_active):
-                last_val = ""
+                for c in range(num_cols_active):
+                    last_val = ""
                 for r in range(num_rows):
                     curr = str(grid_data[r][c]).strip()
 
@@ -167,9 +166,8 @@ if uploaded_file:
                     else:
                         grid_data[r][c] = last_val
 
-            st.session_state['data_final'] = grid_data
-            st.session_state['num_cols'] = num_cols_active
-
+                st.session_state['data_final'] = grid_data
+                st.session_state['num_cols'] = num_cols_active
 
 # ---------------- GOOGLE SHEET ----------------
 if 'data_final' in st.session_state:
