@@ -8,7 +8,7 @@ import gspread
 from itertools import permutations
 from oauth2client.service_account import ServiceAccountCredentials
 
-st.set_page_config(page_title="Lottery Pro 2026 Stable", layout="wide")
+st.set_page_config(page_title="Lottery Pro 2026 Auto Detect", layout="wide")
 
 # ---------------- OCR ----------------
 @st.cache_resource
@@ -62,16 +62,16 @@ def process_bet_logic(num_txt, amt_txt):
 
     return results
 
+
 # ---------------- SIDEBAR ----------------
 with st.sidebar:
     st.header("⚙️ Settings")
     num_rows = st.number_input("Rows", min_value=1, value=25)
-    col_mode = st.selectbox("Columns", ["2","4","6","8"], index=3)
-    num_cols_active = int(col_mode)
 
-st.title("🎰 Lottery OCR Ultra Stable 2026")
 
-uploaded_file = st.file_uploader("Upload Image", type=["jpg","jpeg","png"])
+st.title("🎰 Lottery OCR Ultra Auto Column Detect 2026")
+
+uploaded_file = st.file_uploader("Upload Voucher Image", type=["jpg","jpeg","png"])
 
 if uploaded_file:
     file_bytes = np.asarray(bytearray(uploaded_file.read()), dtype=np.uint8)
@@ -79,25 +79,51 @@ if uploaded_file:
     st.image(img, channels="BGR", use_container_width=True)
 
     if st.button("🔍 OCR Scan"):
-        with st.spinner(f"Scanning {num_cols_active} columns..."):
+        with st.spinner("Scanning & Auto Detecting Columns..."):
 
             gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
             clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
             processed = clahe.apply(gray)
 
             h, w = processed.shape
+
+            # ---------------- AUTO COLUMN DETECT ----------------
+            proj = np.sum(processed, axis=0)
+            proj_norm = proj / np.max(proj)
+
+            text_mask = proj_norm < 0.92
+            col_indices = np.where(text_mask)[0]
+
+            clusters = []
+            if len(col_indices) > 0:
+                current_cluster = [col_indices[0]]
+
+                for idx in col_indices[1:]:
+                    if idx - current_cluster[-1] < 20:
+                        current_cluster.append(idx)
+                    else:
+                        clusters.append(current_cluster)
+                        current_cluster = [idx]
+
+                clusters.append(current_cluster)
+
+            num_cols_active = len(clusters)
+            if num_cols_active == 0:
+                num_cols_active = 2  # fallback safety
+
             col_width = w / num_cols_active
+
+            st.success(f"🔎 Auto Detected Columns: {num_cols_active}")
+
             grid_data = [["" for _ in range(num_cols_active)] for _ in range(num_rows)]
 
+            # ---------------- OCR READ ----------------
             results = reader.readtext(
                 processed,
                 detail=1,
-                paragraph=False,
-                width_ths=0.7,
-                height_ths=0.7
+                paragraph=False
             )
 
-            # ---------------- OCR Mapping ----------------
             for (bbox, text, prob) in results:
                 if prob < 0.40:
                     continue
@@ -112,7 +138,6 @@ if uploaded_file:
 
                     txt = text.upper().strip()
 
-                    # OCR Common Fix
                     repls = {
                         'S':'5','G':'6','I':'1','Z':'7',
                         'B':'8','O':'0','L':'1','T':'7',
@@ -130,16 +155,11 @@ if uploaded_file:
 
                     grid_data[r_idx][c_idx] = txt
 
-            # ---------------- Ditto Logic ----------------
+            # ---------------- DITTO LOGIC ----------------
             for c in range(num_cols_active):
                 last_val = ""
                 for r in range(num_rows):
-                    curr = str(grid_data[r][c]).strip().upper()
-
-                    if c % 2 == 0:  # number column
-                        curr = re.sub(r'[^0-9R]', '', curr)
-                        if curr.isdigit():
-                            curr = curr.zfill(3)
+                    curr = str(grid_data[r][c]).strip()
 
                     if curr:
                         last_val = curr
@@ -148,8 +168,9 @@ if uploaded_file:
                         grid_data[r][c] = last_val
 
             st.session_state['data_final'] = grid_data
+            st.session_state['num_cols'] = num_cols_active
 
-        
+
 # ---------------- GOOGLE SHEET ----------------
 if 'data_final' in st.session_state:
     edited_data = st.data_editor(st.session_state['data_final'], use_container_width=True)
@@ -158,7 +179,10 @@ if 'data_final' in st.session_state:
         try:
             secret_info = json.loads(st.secrets["GCP_SERVICE_ACCOUNT_FILE"])
             secret_info["private_key"] = secret_info["private_key"].replace("\\n","\n")
-            scope = ["https://spreadsheets.google.com/feeds","https://www.googleapis.com/auth/drive"]
+
+            scope = ["https://spreadsheets.google.com/feeds",
+                     "https://www.googleapis.com/auth/drive"]
+
             creds = ServiceAccountCredentials.from_json_keyfile_dict(secret_info, scope)
             client = gspread.authorize(creds)
 
@@ -169,19 +193,23 @@ if 'data_final' in st.session_state:
             sh1.append_rows(edited_data)
 
             master_sum = {}
+            num_cols_active = st.session_state['num_cols']
+
             for row in edited_data:
-                for i in range(0, num_cols_active, 2):
+                for i in range(0, len(row)-1, 2):
                     n_txt = str(row[i]).strip()
                     a_txt = str(row[i+1]).strip()
+
                     if n_txt and a_txt:
                         bet_res = process_bet_logic(n_txt, a_txt)
                         for g,val in bet_res.items():
-                            master_sum[g] = master_sum.get(g,0)+val
+                            master_sum[g] = master_sum.get(g,0) + val
 
             sh2.clear()
             final_list = [[k, master_sum[k]] for k in sorted(master_sum.keys())]
             sh2.append_rows([["Number","Total"]] + final_list)
 
             st.success("✅ Uploaded Successfully!")
+
         except Exception as e:
             st.error(f"Error: {str(e)}")
