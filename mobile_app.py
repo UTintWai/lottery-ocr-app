@@ -80,85 +80,75 @@ if uploaded_file:
 
     if st.button("🔍 OCR Scan"):
         with st.spinner(f"Scanning {num_cols_active} columns..."):
+
             gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
-        clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
-        processed = clahe.apply(gray)
+            clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
+            processed = clahe.apply(gray)
 
-        h, w = processed.shape
-        col_width = w / num_cols_active
-        grid_data = [["" for _ in range(num_cols_active)] for _ in range(num_rows)]
-
-        results = reader.readtext(
-            processed,
-            detail=1,
-            paragraph=False,
-            width_ths=0.7,
-            height_ths=0.7
-        )
-
-        for (bbox, text, prob) in results:
-            if prob < 0.40:
-                continue
-            cx = np.mean([p[0] for p in bbox])
-            cy = np.mean([p[1] for p in bbox])
-
-            # ✅ round() သုံးပြီး column index ပိုတိကျစွာ map
-            c_idx = round(cx / col_width)
-            c_idx = min(max(c_idx, 0), num_cols_active-1)
-            r_idx = int((cy / h) * num_rows)
-
-            if 0 <= r_idx < num_rows and 0 <= c_idx < num_cols_active:
-                txt = text.upper().strip()
-                repls = {'S':'5','G':'6','I':'1','Z':'7','B':'8','O':'0','L':'1','T':'7','Q':'0','D':'0'}
-                for k,v in repls.items():
-                    txt = txt.replace(k,v)
-                if c_idx % 2 == 0:
-                    txt = re.sub(r'[^0-9R]', '', txt)
-                grid_data[r_idx][c_idx] = txt
-            proj = np.sum(processed, axis=0)
-            threshold = np.mean(proj)
-            peaks = np.where(proj > threshold)[0]
-
-            # cluster peaks into column groups
-            col_clusters = np.unique(np.round(peaks / (w/8)))
-            num_cols_active = len(col_clusters)
-            st.write("OCR Raw Results:", results)
-
+            h, w = processed.shape
             col_width = w / num_cols_active
             grid_data = [["" for _ in range(num_cols_active)] for _ in range(num_rows)]
 
-            # ✅ Ditto + Number/Amount Logic
+            results = reader.readtext(
+                processed,
+                detail=1,
+                paragraph=False,
+                width_ths=0.7,
+                height_ths=0.7
+            )
+
+            # ---------------- OCR Mapping ----------------
+            for (bbox, text, prob) in results:
+                if prob < 0.40:
+                    continue
+
+                cx = np.mean([p[0] for p in bbox])
+                cy = np.mean([p[1] for p in bbox])
+
+                c_idx = int(cx / col_width)
+                r_idx = int((cy / h) * num_rows)
+
+                if 0 <= r_idx < num_rows and 0 <= c_idx < num_cols_active:
+
+                    txt = text.upper().strip()
+
+                    # OCR Common Fix
+                    repls = {
+                        'S':'5','G':'6','I':'1','Z':'7',
+                        'B':'8','O':'0','L':'1','T':'7',
+                        'Q':'0','D':'0'
+                    }
+
+                    for k,v in repls.items():
+                        txt = txt.replace(k,v)
+
+                    if c_idx % 2 == 0:
+                        txt = re.sub(r'[^0-9R]', '', txt)
+                    else:
+                        nums = re.findall(r'\d+', txt)
+                        txt = max(nums, key=lambda x: int(x)) if nums else ""
+
+                    grid_data[r_idx][c_idx] = txt
+
+            # ---------------- Ditto Logic ----------------
             for c in range(num_cols_active):
                 last_val = ""
-            for r in range(num_rows):
-                curr = str(grid_data[r][c]).strip().upper()
-                if c % 2 == 0:  # number columns
-                    curr = re.sub(r'[^0-9R]', '', curr)
-                    if curr.isdigit():
-                        curr = curr.zfill(3)
-                        grid_data[r][c] = curr if curr else last_val
-                        if curr:
-                            last_val = curr
-                        else:  # amount columns
-                            nums = re.findall(r'\d+', curr)
-                            curr = max(nums, key=lambda x: int(x)) if nums else ""
-                if not curr and last_val:
-                    grid_data[r][c] = last_val
-                else:
-                    grid_data[r][c] = curr
+                for r in range(num_rows):
+                    curr = str(grid_data[r][c]).strip().upper()
+
+                    if c % 2 == 0:  # number column
+                        curr = re.sub(r'[^0-9R]', '', curr)
+                        if curr.isdigit():
+                            curr = curr.zfill(3)
+
                     if curr:
                         last_val = curr
-                    else:  # amount columns
-                        nums = re.findall(r'\d+', curr)
-                        curr = max(nums, key=lambda x: int(x)) if nums else ""
-                    if (curr == "" or (curr.isdigit() and len(curr) <= 2)) and last_val:
-                        grid_data[r][c] = last_val
-                    else:
                         grid_data[r][c] = curr
-                        if curr:
-                            last_val = curr
+                    else:
+                        grid_data[r][c] = last_val
 
-        st.session_state['data_final'] = grid_data
+            st.session_state['data_final'] = grid_data
+
         
 # ---------------- GOOGLE SHEET ----------------
 if 'data_final' in st.session_state:
