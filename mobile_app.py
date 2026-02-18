@@ -124,9 +124,10 @@ if uploaded_file:
             repls = {
                 'S':'5','G':'6','I':'1','Z':'7',
                 'B':'8','O':'0','L':'1','T':'7',
-                'Q':'0','D':'0'
+                'Q':'0','D':'0','ဒ':'3',
+                'IZO':'120','12O':'120','[ZO':'120',']ZO':'120'
             }
-
+            
             # OCR READ
             results = reader.readtext(processed, detail=1, paragraph=False)
             for (bbox, text, prob) in results:
@@ -155,8 +156,13 @@ if uploaded_file:
                         curr = re.sub(r'[^0-9R]', '', curr)
                         if curr.isdigit():
                             curr = curr.zfill(3)
-                        if r > 0 and curr == grid_data[r-1][c]:
-                            curr = ""  # clear duplicate
+                            # prevent duplicate above/below
+                            if r > 0 and curr == grid_data[r-1][c]:
+                                curr = ""  # clear duplicate
+                                grid_data[r][c] = curr if curr else last_val
+                                if curr:
+                                    last_val = curr
+                  
                     else:  # amount column
                         nums = re.findall(r'\d+', curr)
                         curr = max(nums, key=lambda x: int(x)) if nums else ""
