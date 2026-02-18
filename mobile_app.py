@@ -138,15 +138,30 @@ if uploaded_file:
                     grid_data[r_idx][c_idx] = txt
 
             # Ditto Logic
-            for c in range(num_cols_active):
-                last_val = ""
-                for r in range(num_rows):
-                    curr = str(grid_data[r][c]).strip()
-                    if curr:
-                        last_val = curr
-                        grid_data[r][c] = curr
-                    else:
-                        grid_data[r][c] = last_val
+            # After OCR mapping
+for c in range(num_cols_active):
+    last_val = ""
+    for r in range(num_rows):
+        curr = str(grid_data[r][c]).strip()
+
+        if c % 2 == 0:  # number column
+            curr = re.sub(r'[^0-9R]', '', curr)
+            if curr.isdigit():
+                curr = curr.zfill(3)
+
+            # prevent duplicate above/below
+            if r > 0 and curr == grid_data[r-1][c]:
+                curr = ""  # clear duplicate
+            grid_data[r][c] = curr if curr else last_val
+            if curr:
+                last_val = curr
+
+        else:  # amount column
+            nums = re.findall(r'\d+', curr)
+            curr = max(nums, key=lambda x: int(x)) if nums else ""
+            grid_data[r][c] = curr if curr else last_val
+            if curr:
+                last_val = curr
 
             st.session_state['data_final'] = grid_data
             st.session_state['num_cols'] = num_cols_active
