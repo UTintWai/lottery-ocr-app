@@ -67,24 +67,20 @@ def process_bet_logic(num_txt, amt_txt):
 with st.sidebar:
     st.header("⚙️ Settings")
     num_rows = st.number_input("Rows", min_value=1, value=25)
+    col_mode = st.selectbox("Columns (Manual Override)", ["Auto Detect","2","4","6","8"], index=0)
 
+...
 
-st.title("🎰 Lottery OCR Ultra Auto Column Detect 2026")
+if st.button("🔍 OCR Scan"):
+    with st.spinner("Scanning & Auto Detecting Columns..."):
 
-uploaded_file = st.file_uploader("Upload Voucher Image", type=["jpg","jpeg","png"])
+        gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY) # type: ignore
+        clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
+        processed = clahe.apply(gray)
 
-if uploaded_file:
-    file_bytes = np.asarray(bytearray(uploaded_file.read()), dtype=np.uint8)
-    img = cv2.imdecode(file_bytes, 1)
-    st.image(img, channels="BGR", use_container_width=True)
+        h, w = processed.shape
 
-    if st.button("🔍 OCR Scan"):
-        with st.spinner("Scanning & Auto Detecting Columns..."):
-            gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
-            clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
-            processed = clahe.apply(gray)
-            h, w = processed.shape
-        # ---------------- AUTO COLUMN DETECT ----------------
+        # AUTO DETECT
         proj = np.sum(processed, axis=0)
         threshold = np.percentile(proj, 75)
         text_mask = proj < threshold
@@ -94,28 +90,30 @@ if uploaded_file:
         if len(col_indices) > 0:
             current_cluster = [col_indices[0]]
             gap_limit = w // 20
-
             for idx in col_indices[1:]:
                 if idx - current_cluster[-1] < gap_limit:
                     current_cluster.append(idx)
                 else:
                     clusters.append(current_cluster)
                     current_cluster = [idx]
-
             clusters.append(current_cluster)
 
-        num_cols_active = len(clusters)
+        num_cols_detected = len(clusters)
+        if num_cols_detected < 6:
+            num_cols_detected = 6
+        elif num_cols_detected > 8:
+            num_cols_detected = 8
 
-        # Clamp result to 6–8 columns only
-        if num_cols_active < 6:
-            num_cols_active = 6
-        elif num_cols_active > 8:
-            num_cols_active = 8
+        # Manual override
+        if col_mode != "Auto Detect":
+            num_cols_active = int(col_mode)
+        else:
+            num_cols_active = num_cols_detected
 
         col_width = w / num_cols_active
         grid_data = [["" for _ in range(num_cols_active)] for _ in range(num_rows)]
 
-        st.success(f"🔎 Auto Detected Columns: {num_cols_active}")
+        st.success(f"🔎 Columns Used: {num_cols_active}")
 
         # ---------------- OCR READ ----------------
         results = reader.readtext(
