@@ -36,42 +36,41 @@ uploaded_file = st.file_uploader("Upload Voucher Image", type=["jpg","jpeg","png
 
 if uploaded_file is not None:
 
+    # Read image
     file_bytes = np.asarray(bytearray(uploaded_file.read()), dtype=np.uint8)
     img = cv2.imdecode(file_bytes, cv2.IMREAD_COLOR)
-
     st.image(img, channels="BGR", use_container_width=True)
 
     if st.button("🔍 OCR Scan"):
 
         # -------- Image Processing --------
         gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
-        gray = cv2.resize(gray, None, fx=2, fy=2)
+        gray = cv2.GaussianBlur(gray, (5,5), 0)
 
         processed = cv2.adaptiveThreshold(
             gray,
             255,
-            cv2.ADAPTIVE_THRESH_GAUSSIAN_C,
-            cv2.THRESH_BINARY_INV,
-            11,
-            2
+            cv2.ADAPTIVE_THRESH_MEAN_C,
+            cv2.THRESH_BINARY,
+            15,
+            5
         )
 
-        st.image(processed, caption="Processed Image")
+        st.image(processed, caption="Processed Image", use_column_width=True)
 
         # -------- Grid Setup --------
         h, w = processed.shape
-
         if col_mode != "Auto Detect":
             num_cols_active = int(col_mode)
         else:
-            num_cols_active = 4
+            num_cols_active = 8  # default Auto Detect to 8 columns
 
         col_width = w / num_cols_active
         grid_data = [["" for _ in range(num_cols_active)] for _ in range(num_rows)]
 
         # -------- OCR --------
         results = reader.readtext(processed, detail=1, paragraph=False)
-        st.write("OCR Results:", results)
+        st.write("OCR Raw Results:", results)
 
         for (bbox, text, prob) in results:
             if prob < 0.4:
@@ -90,7 +89,7 @@ if uploaded_file is not None:
                     grid_data[r_idx][c_idx] = nums[0]
 
         st.session_state['data_final'] = grid_data
-        st.success("Scan Complete")
+        st.success(f"Scan Complete - Columns Used: {num_cols_active}")
 
 # ---------------- DISPLAY ----------------
 if 'data_final' in st.session_state:
