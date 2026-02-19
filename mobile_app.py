@@ -80,6 +80,11 @@ def clean_ocr_text(txt):
         txt = txt.replace(k,v)
 
     return txt
+@st.cache_resource
+def load_ocr():
+    return easyocr.Reader(['en'], gpu=False)
+
+reader = load_ocr()
 
 # ---------------- SIDEBAR ----------------
 with st.sidebar:
