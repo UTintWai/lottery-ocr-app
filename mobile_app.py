@@ -3,10 +3,8 @@ import numpy as np
 import easyocr
 import cv2
 import re
-import os
-from itertools import permutations
 
-st.set_page_config(page_title="Lottery Pro 2026 Auto Detect", layout="wide")
+st.set_page_config(page_title="Lottery Pro 2026", layout="wide")
 
 # ---------------- OCR ----------------
 @st.cache_resource
@@ -14,34 +12,6 @@ def load_ocr():
     return easyocr.Reader(['en'], gpu=False)
 
 reader = load_ocr()
-
-# ---------------- LOAD TEMPLATES ----------------
-@st.cache_resource
-def load_templates():
-    templates = {}
-    for i in range(10):
-        path = os.path.join("templates", f"{i}.png")
-        if os.path.exists(path):
-            img = cv2.imread(path, 0)
-            _, img = cv2.threshold(img, 127, 255, cv2.THRESH_BINARY_INV)
-            templates[str(i)] = cv2.resize(img, (28, 28))
-    return templates
-
-templates = load_templates()
-
-def template_match_digit(roi):
-    roi = cv2.resize(roi, (28,28))
-    best_score = -1
-    best_digit = ""
-
-    for digit, tmpl in templates.items():
-        res = cv2.matchTemplate(roi, tmpl, cv2.TM_CCOEFF_NORMED)
-        _, score, _, _ = cv2.minMaxLoc(res)
-        if score > best_score:
-            best_score = score
-            best_digit = digit
-
-    return best_digit if best_score > 0.4 else ""
 
 # ---------------- CLEAN OCR ----------------
 def clean_ocr_text(txt):
@@ -55,37 +25,23 @@ def clean_ocr_text(txt):
         txt = txt.replace(k,v)
     return txt
 
-    # ---------------- SIDEBAR ----------------
+# ---------------- SIDEBAR ----------------
 with st.sidebar:
     st.markdown("### ⚙ Grid Control")
-
     num_rows = st.number_input("Rows", min_value=1, max_value=100, value=25)
-
-    col_mode = st.selectbox(
-        "Columns",
-        ["Auto Detect", "2", "4", "6", "8"],
-        index=0
-    )
-
-    st.markdown("---")
-
-    force_rescan = st.button("🔄 Force Re-Scan")
-    clear_data = st.button("🗑 Clear Table")
-
+    col_mode = st.selectbox("Columns", ["Auto Detect","2","4","6","8"])
 
 # ---------------- FILE UPLOAD ----------------
 uploaded_file = st.file_uploader("Upload Voucher Image", type=["jpg","jpeg","png"])
 
-if uploaded_file:
+if uploaded_file is not None:
 
     file_bytes = np.asarray(bytearray(uploaded_file.read()), dtype=np.uint8)
     img = cv2.imdecode(file_bytes, cv2.IMREAD_COLOR)
 
     st.image(img, channels="BGR", use_container_width=True)
 
-    scan_trigger = st.button("🔍 OCR Scan")
-
-    if scan_trigger:
+    if st.button("🔍 OCR Scan"):
 
         gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
         gray = cv2.resize(gray, None, fx=2, fy=2)
@@ -93,32 +49,10 @@ if uploaded_file:
 
         h, w = processed.shape
 
-        # AUTO COLUMN DETECT
-        proj = np.sum(processed, axis=0)
-        threshold = np.percentile(proj, 75)
-        text_mask = proj > threshold
-        col_indices = np.where(text_mask)[0]
-
-        clusters = []
-        if len(col_indices) > 0:
-            current = [col_indices[0]]
-            for idx in col_indices[1:]:
-                if idx - current[-1] < 15:
-                    current.append(idx)
-                else:
-                    clusters.append(current)
-                    current = [idx]
-            clusters.append(current)
-
-        num_cols_detected = len(clusters)
-
-        if num_cols_detected < 2:
-            num_cols_detected = 2
-
         if col_mode != "Auto Detect":
             num_cols_active = int(col_mode)
         else:
-            num_cols_active = num_cols_detected
+            num_cols_active = 4
 
         col_width = w / num_cols_active
         grid_data = [["" for _ in range(num_cols_active)] for _ in range(num_rows)]
@@ -138,19 +72,15 @@ if uploaded_file:
             if 0 <= r_idx < num_rows and 0 <= c_idx < num_cols_active:
                 txt = clean_ocr_text(text)
                 nums = re.findall(r'\d+', txt)
-
                 if nums:
                     grid_data[r_idx][c_idx] = nums[0]
-                else:
-                    grid_data[r_idx][c_idx] = ""
 
         st.session_state['data_final'] = grid_data
         st.success("Scan Complete")
 
-
 # ---------------- DISPLAY ----------------
 if 'data_final' in st.session_state:
-    edited_data = st.data_editor(
+    st.data_editor(
         st.session_state['data_final'],
         use_container_width=True
     )
