@@ -32,6 +32,8 @@ def load_templates():
 templates = load_templates()
 
 def template_match_digit(roi):
+    if roi.size == 0:
+        return ""
     roi = cv2.resize(roi, (28,28))
     best_score = -1
     best_digit = ""
@@ -41,7 +43,7 @@ def template_match_digit(roi):
         if score > best_score:
             best_score = score
             best_digit = digit
-    return best_digit if best_score > 0.4 else ""
+    return best_digit if best_score > 0.35 else ""   # cutoff tune
 
 # ---------------- CLEAN OCR ----------------
 def clean_ocr_text(txt):
@@ -78,10 +80,7 @@ if uploaded_file is not None:
 
         # -------- Grid Setup --------
         h, w = processed.shape
-        if col_mode != "Auto Detect":
-            num_cols_active = int(col_mode)
-        else:
-            num_cols_active = 8  # default 8 columns
+        num_cols_active = int(col_mode) if col_mode != "Auto Detect" else 8
         col_width = w / num_cols_active
         grid_data = [["" for _ in range(num_cols_active)] for _ in range(num_rows)]
 
@@ -89,22 +88,19 @@ if uploaded_file is not None:
         results = reader.readtext(processed, detail=1, paragraph=False)
 
         for (bbox, text, prob) in results:
-            if prob < 0.4:
-                # Low confidence → try template fallback
+            if prob < 0.35:   # cutoff tune
                 x, y, w_box, h_box = cv2.boundingRect(np.array(bbox).astype(int))
                 roi = processed[y:y+h_box, x:x+w_box]
                 text = template_match_digit(roi)
             else:
                 text = clean_ocr_text(text)
-            
-            # Compute approximate row/column
+
             cx = np.mean([p[0] for p in bbox])
             cy = np.mean([p[1] for p in bbox])
             c_idx = int(cx / col_width)
             r_idx = int((cy / h) * num_rows)
 
             if 0 <= r_idx < num_rows and 0 <= c_idx < num_cols_active:
-                # Keep digits only
                 nums = re.findall(r'\d+', text)
                 if nums:
                     grid_data[r_idx][c_idx] = nums[0]
@@ -123,7 +119,4 @@ if uploaded_file is not None:
 
 # ---------------- DISPLAY GRID ----------------
 if 'data_final' in st.session_state:
-    st.data_editor(
-        st.session_state['data_final'],
-        use_container_width=True
-    )
+    st.data_editor(st.session_state['data_final'], use_container_width=True)
