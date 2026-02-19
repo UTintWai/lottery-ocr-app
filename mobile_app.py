@@ -43,10 +43,22 @@ if uploaded_file is not None:
 
     if st.button("🔍 OCR Scan"):
 
+        # -------- Image Processing --------
         gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
         gray = cv2.resize(gray, None, fx=2, fy=2)
-        _, processed = cv2.threshold(gray, 150, 255, cv2.THRESH_BINARY_INV)
 
+        processed = cv2.adaptiveThreshold(
+            gray,
+            255,
+            cv2.ADAPTIVE_THRESH_GAUSSIAN_C,
+            cv2.THRESH_BINARY_INV,
+            11,
+            2
+        )
+
+        st.image(processed, caption="Processed Image")
+
+        # -------- Grid Setup --------
         h, w = processed.shape
 
         if col_mode != "Auto Detect":
@@ -57,7 +69,9 @@ if uploaded_file is not None:
         col_width = w / num_cols_active
         grid_data = [["" for _ in range(num_cols_active)] for _ in range(num_rows)]
 
+        # -------- OCR --------
         results = reader.readtext(processed, detail=1, paragraph=False)
+        st.write("OCR Results:", results)
 
         for (bbox, text, prob) in results:
             if prob < 0.4:
