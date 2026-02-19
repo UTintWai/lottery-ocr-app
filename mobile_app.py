@@ -55,10 +55,23 @@ def clean_ocr_text(txt):
         txt = txt.replace(k,v)
     return txt
 
-# ---------------- SIDEBAR ----------------
+    # ---------------- SIDEBAR ----------------
 with st.sidebar:
-    num_rows = st.number_input("Rows", min_value=1, value=25)
-    col_mode = st.selectbox("Columns", ["Auto Detect","2","4","6","8"], index=0)
+    st.markdown("### ⚙ Grid Control")
+
+    num_rows = st.number_input("Rows", min_value=1, max_value=100, value=25)
+
+    col_mode = st.selectbox(
+        "Columns",
+        ["Auto Detect", "2", "4", "6", "8"],
+        index=0
+    )
+
+    st.markdown("---")
+
+    force_rescan = st.button("🔄 Force Re-Scan")
+    clear_data = st.button("🗑 Clear Table")
+
 
 # ---------------- FILE UPLOAD ----------------
 uploaded_file = st.file_uploader("Upload Voucher Image", type=["jpg","jpeg","png"])
@@ -70,7 +83,9 @@ if uploaded_file:
 
     st.image(img, channels="BGR", use_container_width=True)
 
-    if st.button("🔍 OCR Scan"):
+    scan_trigger = st.button("🔍 OCR Scan")
+
+    if scan_trigger:
 
         gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
         gray = cv2.resize(gray, None, fx=2, fy=2)
@@ -78,7 +93,7 @@ if uploaded_file:
 
         h, w = processed.shape
 
-        # ---------- AUTO COLUMN DETECT ----------
+        # AUTO COLUMN DETECT
         proj = np.sum(processed, axis=0)
         threshold = np.percentile(proj, 75)
         text_mask = proj > threshold
@@ -96,10 +111,9 @@ if uploaded_file:
             clusters.append(current)
 
         num_cols_detected = len(clusters)
-        if num_cols_detected < 6:
-            num_cols_detected = 6
-        if num_cols_detected > 8:
-            num_cols_detected = 8
+
+        if num_cols_detected < 2:
+            num_cols_detected = 2
 
         if col_mode != "Auto Detect":
             num_cols_active = int(col_mode)
@@ -109,7 +123,6 @@ if uploaded_file:
         col_width = w / num_cols_active
         grid_data = [["" for _ in range(num_cols_active)] for _ in range(num_rows)]
 
-        # ---------- OCR READ ----------
         results = reader.readtext(processed, detail=1, paragraph=False)
 
         for (bbox, text, prob) in results:
@@ -123,41 +136,17 @@ if uploaded_file:
             r_idx = int((cy / h) * num_rows)
 
             if 0 <= r_idx < num_rows and 0 <= c_idx < num_cols_active:
-
                 txt = clean_ocr_text(text)
+                nums = re.findall(r'\d+', txt)
 
-                # NUMBER COLUMN
-                if c_idx % 2 == 0:
-                    nums = re.findall(r'\d+', txt)
-
-                    if nums:
-                        txt = nums[0].zfill(3)
-                    else:
-                        # fallback to template matching
-                        x,y,w1,h1 = cv2.boundingRect(np.array(bbox).astype(int))
-                        roi = processed[y:y+h1, x:x+w1]
-                        txt = template_match_digit(roi)
-
-                # AMOUNT COLUMN
+                if nums:
+                    grid_data[r_idx][c_idx] = nums[0]
                 else:
-                    nums = re.findall(r'\d+', txt)
-                    txt = max(nums, key=lambda x: int(x)) if nums else ""
-
-                grid_data[r_idx][c_idx] = txt
-
-        # ---------- DITTO LOGIC ----------
-        for c in range(num_cols_active):
-            last_val = ""
-            for r in range(num_rows):
-                curr = grid_data[r][c].strip()
-
-                if curr == "":
-                    grid_data[r][c] = last_val
-                else:
-                    last_val = curr
+                    grid_data[r_idx][c_idx] = ""
 
         st.session_state['data_final'] = grid_data
-        st.success(f"Columns Used: {num_cols_active}")
+        st.success("Scan Complete")
+
 
 # ---------------- DISPLAY ----------------
 if 'data_final' in st.session_state:
