@@ -21,8 +21,7 @@ reader = load_ocr()
 
 # --- SCAN FUNCTION ---
 def scan_voucher_final(img, active_cols, num_rows):
-    # ၁။ ပုံကို ၅၀% ချုံ့လိုက်ပါ (OCR ပိုမြန်သွားပါမယ်)
-    img = cv2.resize(img, (0,0), fx=0.5, fy=0.5) 
+    img = cv2.resize(img, (0,0), fx=0.4, fy=0.4) # 0.4 ကို ပြောင်းကြည့်ပါ
     gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
     h, w = gray.shape # ပုံရဲ့ အမြင့်နဲ့ အနံကို ယူပါတယ်
 
@@ -72,10 +71,9 @@ if 'sheet_data' in st.session_state:
                     
     if st.button("🚀 Send to Google Sheet"):
         try:
-            # ၁။ Secrets ကို ဖတ်ခြင်း (dict() မသုံးပါနဲ့)
-            info = st.secrets["GCP_SERVICE_ACCOUNT_FILE"] 
+            # try အောက်က စာကြောင်းအားလုံးကို Tab တစ်ချက်စီ ပုတ်ထားရပါမယ်
+            info = st.secrets["GCP_SERVICE_ACCOUNT_FILE"]
             
-            # ၂။ Credential dictionary ပြန်ဖွဲ့ခြင်း
             creds_dict = {
                 "type": info["type"],
                 "project_id": info["project_id"],
@@ -96,8 +94,7 @@ if 'sheet_data' in st.session_state:
             ss = client.open("LotteryData")
             sh1 = ss.get_worksheet(0)
             
-            # ၃။ ဒေတာ သန့်စင်ပြီး ပို့ခြင်း
-            # edited_df သည် list ဖြစ်နေသောကြောင့် values.tolist() သုံးရန်မလိုပါ
+            # ဒေတာပို့ရန် row များ စစ်ထုတ်ခြင်း
             clean_rows = [row for row in edited_df if any(str(cell).strip() for cell in row)]
             
             if clean_rows:
@@ -107,4 +104,5 @@ if 'sheet_data' in st.session_state:
                 st.warning("ပို့စရာ ဒေတာ မရှိပါဘူး။")
 
         except Exception as e:
+            # except သည် try နဲ့ တစ်တန်းတည်း ဖြစ်ရပါမယ်
             st.error(f"Error: {str(e)}")
