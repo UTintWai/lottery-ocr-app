@@ -9,13 +9,16 @@ import gspread
 from itertools import permutations
 from oauth2client.service_account import ServiceAccountCredentials
 
-# --- OCR & LOGIC ---
+# --- CONFIG ---
+st.set_page_config(page_title="Lottery Pro 2026 Stable", layout="wide")
+
 @st.cache_resource
 def load_ocr():
     return easyocr.Reader(['en'], gpu=False)
 
 reader = load_ocr()
 
+# --- BET LOGIC ---
 def process_bet_logic(num_txt, amt_txt):
     num = re.sub(r'[^0-9R]', '', str(num_txt))
     amt_str = re.sub(r'[^0-9]', '', str(amt_txt))
@@ -32,7 +35,7 @@ def process_bet_logic(num_txt, amt_txt):
         results[num] = amt
     return results
 
-# --- MAIN SCAN FUNCTION ---
+# --- SCAN FUNCTION ---
 def scan_voucher_final(img, active_cols, num_rows):
     gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
     h, w = gray.shape
@@ -54,13 +57,14 @@ def scan_voucher_final(img, active_cols, num_rows):
     return grid_data
 
 # --- UI ---
-st.title("Lottery Pro 2026 (Sheet Fix)")
+st.title("🎯 Lottery Pro 2026")
 
 with st.sidebar:
+    st.header("⚙️ Settings")
     a_cols = st.selectbox("အတိုင်အရေအတွက်", [2, 4, 6, 8], index=2)
     n_rows = st.number_input("အတန်းအရေအတွက်", min_value=1, value=25)
 
-uploaded_file = st.file_uploader("Voucher တင်ပါ", type=["jpg","png","jpeg"])
+uploaded_file = st.file_uploader("Voucher ပုံတင်ပါ", type=["jpg","png","jpeg"])
 
 if uploaded_file:
     file_bytes = np.asarray(bytearray(uploaded_file.read()), dtype=np.uint8)
@@ -68,40 +72,37 @@ if uploaded_file:
     st.image(img, use_container_width=True)
 
     if st.button("🔍 Scan စတင်မည်"):
-        data = scan_voucher_final(img, a_cols, n_rows)
-        st.session_state['sheet_data'] = data
+        with st.spinner("ဖတ်နေပါသည်..."):
+            data = scan_voucher_final(img, a_cols, n_rows)
+            st.session_state['sheet_data'] = data
 
+# --- EDIT & SEND TO SHEET ---
 if 'sheet_data' in st.session_state:
+    st.subheader("📝 Edit Data")
     edited_df = st.data_editor(st.session_state['sheet_data'], use_container_width=True)
     
     if st.button("🚀 Send to Google Sheet"):
         try:
-            # ၁။ Secrets ထဲက JSON ကို ဖတ်ခြင်း
             if "GCP_SERVICE_ACCOUNT_FILE" not in st.secrets:
-                st.error("Secrets ထဲမှာ GCP_SERVICE_ACCOUNT_FILE မရှိပါဘူးဗျ။")
+                st.error("Secrets JSON key missing!")
                 st.stop()
                 
-            info = json.loads(st.secrets["GCP_SERVICE_ACCOUNT_FILE"])
+            info = dict(st.secrets["GCP_SERVICE_ACCOUNT_FILE"])
             info["private_key"] = info["private_key"].replace("\\n", "\n")
             
-            # ၂။ Authenticate လုပ်ခြင်း
-            scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
-            creds = ServiceAccountCredentials.from_json_keyfile_dict(info, scope)
+            creds = ServiceAccountCredentials.from_json_keyfile_dict(info, 
+                    ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"])
             client = gspread.authorize(creds)
             
-            # ၃။ Sheet ကို ဖွင့်ခြင်း
             ss = client.open("LotteryData")
             sh1 = ss.get_worksheet(0)
             sh2 = ss.get_worksheet(1)
             
-            # ၄။ Data ပို့ခြင်း
-            with st.spinner("ပို့ဆောင်နေပါသည်..."):
-                # ဗလာဖြစ်နေတဲ့ row တွေကို ဖယ်ထုတ်ပါမယ်
-                clean_rows = [row for row in edited_df if any(row)]
-                if clean_rows:
-                    sh1.append_rows(clean_rows)
+            clean_rows = [row for row in edited_df if any(row)]
+            if clean_rows:
+                sh1.append_rows(clean_rows)
                 
-                # Summary တွက်ချက်ခြင်း
+                # Summary Logic
                 master_sum = {}
                 for row in edited_df:
                     for i in range(0, len(row)-1, 2):
@@ -115,9 +116,8 @@ if 'sheet_data' in st.session_state:
                     summary_list = [[k, v] for k, v in sorted(master_sum.items())]
                     sh2.append_rows([["Number", "Amount"]] + summary_list)
                 
-                st.success("✅ Sheet ထဲကို ရောက်သွားပါပြီဗျ!")
-                
-        except gspread.exceptions.SpreadsheetNotFound:
-            st.error("Error: 'LotteryData' ဆိုတဲ့ Sheet နာမည်ကို ရှာမတွေ့ပါဘူး။")
+                st.success("✅ Google Sheet သို့ ပို့ဆောင်ပြီးပါပြီ။")
+            else:
+                st.warning("ပို့ရန် ဒေတာမရှိပါ။")
         except Exception as e:
             st.error(f"Error: {e}")
