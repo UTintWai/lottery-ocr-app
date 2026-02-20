@@ -9,9 +9,9 @@ import gspread
 from itertools import permutations
 from oauth2client.service_account import ServiceAccountCredentials
 
-# ---------------- CONFIG ----------------
-st.set_page_config(page_title="Lottery Pro 2026 Stable OCR", layout="wide")
+st.set_page_config(page_title="Lottery Pro 2026 (Full Control)", layout="wide")
 
+# ---------------- 1. OCR & TEMPLATES ----------------
 @st.cache_resource
 def load_ocr():
     return easyocr.Reader(['en'], gpu=False)
@@ -21,102 +21,131 @@ def load_digit_templates():
     templates = {}
     temp_path = "templates" 
     if os.path.exists(temp_path):
-        for i in range(10):
-            p = os.path.join(temp_path, f"{i}.png")
-            if not os.path.exists(p): p = os.path.join(temp_path, f"{i}.jpg")
-            if os.path.exists(p):
-                img = cv2.imread(p, 0)
-                _, img = cv2.threshold(img, 127, 255, cv2.THRESH_BINARY_INV)
-                templates[str(i)] = cv2.resize(img, (28, 28))
+        for filename in os.listdir(temp_path):
+            if filename.lower().endswith(('.png', '.jpg', '.jpeg')):
+                img = cv2.imread(os.path.join(temp_path, filename), 0)
+                if img is not None:
+                    _, img = cv2.threshold(img, 127, 255, cv2.THRESH_BINARY_INV)
+                    digit_name = filename.split('.')[0]
+                    templates[digit_name] = cv2.resize(img, (28, 28))
     return templates
 
 reader = load_ocr()
 digit_templates = load_digit_templates()
 
-# ---------------- HELPERS ----------------
+# ---------------- 2. LOGIC FUNCTIONS ----------------
 def match_digit_from_image(roi_gray):
     if not digit_templates: return None
     roi = cv2.resize(roi_gray, (28, 28))
     _, roi = cv2.threshold(roi, 127, 255, cv2.THRESH_BINARY_INV)
-    best_score = -1
-    best_digit = None
-    for digit, temp_img in digit_templates.items():
+    best_score, best_digit = -1, None
+    for name, temp_img in digit_templates.items():
         res = cv2.matchTemplate(roi, temp_img, cv2.TM_CCOEFF_NORMED)
         _, max_val, _, _ = cv2.minMaxLoc(res)
         if max_val > best_score:
-            best_score = max_val
-            best_digit = digit
-    return best_digit if best_score > 0.45 else None # Score ကို နည်းနည်းလျှော့ထားပါတယ်
+            best_score, best_digit = max_val, name
+    return best_digit if best_score > 0.5 else None
 
-def clean_ocr_text(txt):
-    txt = txt.upper().strip()
-    # အမှားများတဲ့ စာလုံးတွေကို ဂဏန်းပြောင်းခြင်း
-    repls = {'O':'0','I':'1','L':'1','S':'5','B':'8','G':'6','Z':'7','T':'7','Q':'0','D':'0'}
-    for k,v in repls.items(): txt = txt.replace(k,v)
-    return txt
+def process_bet_logic(num_txt, amt_txt):
+    num_clean = re.sub(r'[^0-9R]', '', str(num_txt).upper())
+    amt_clean = re.sub(r'[^0-9]', '', str(amt_txt))
+    amt = int(amt_clean) if amt_clean else 0
+    results = {}
+    if 'R' in num_clean:
+        base = num_clean.replace('R', '')
+        perms = sorted(list(set([''.join(p) for p in permutations(base)]))) if len(base) == 3 else [base]
+        if perms and amt > 0:
+            split = amt // len(perms)
+            for p in perms: results[p] = split
+    elif num_clean:
+        results[num_clean.zfill(3) if num_clean.isdigit() else num_clean] = amt
+    return results
 
-# ---------------- UI ----------------
-uploaded_file = st.file_uploader("Upload Voucher", type=["jpg","jpeg","png"])
+# ---------------- 3. SIDEBAR (အတိုင်ရွေးရန်) ----------------
+with st.sidebar:
+    st.header("⚙️ Settings")
+    active_cols = st.selectbox("Select Columns", [2, 4, 6, 8], index=2) # Default 6
+    num_rows = st.number_input("Select Rows", min_value=1, value=25)
+    st.info("Templates Loaded: " + str(len(digit_templates)))
+
+# ---------------- 4. MAIN UI ----------------
+uploaded_file = st.file_uploader("Upload Voucher Image", type=["jpg","jpeg","png"])
 
 if uploaded_file:
     file_bytes = np.asarray(bytearray(uploaded_file.read()), dtype=np.uint8)
     img = cv2.imdecode(file_bytes, 1)
     st.image(img, channels="BGR", use_container_width=True)
 
-    if st.button("🔍 Full Scan & Match"):
-        with st.spinner("တစ်ကွက်မကျန် ဖတ်နေသည်..."):
+    if st.button("🔍 Scan Image"):
+        with st.spinner("ဖတ်နေသည်..."):
             gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
-            # အရင် code လိုပဲ ပုံကို ကြည်အောင် အရင်လုပ်ပါမယ်
             clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
             processed = clahe.apply(gray)
             h, w = processed.shape
             
-            num_rows = st.sidebar.number_input("Rows", value=25)
-            num_cols = st.sidebar.selectbox("Cols", [2,4,6,8], index=3)
-            col_w = w / num_cols
-            grid = [["" for _ in range(num_cols)] for _ in range(num_rows)]
+            col_w = w / active_cols
+            grid_data = [["" for _ in range(active_cols)] for _ in range(num_rows)]
 
-            # OCR ဖတ်ခြင်း
-            results = reader.readtext(processed, detail=1)
-
+            results = reader.readtext(processed)
             for (bbox, text, prob) in results:
-                # နေရာတွက်ချက်ခြင်း
-                cx = np.mean([p[0] for p in bbox])
-                cy = np.mean([p[1] for p in bbox])
+                cx, cy = np.mean([p[0] for p in bbox]), np.mean([p[1] for p in bbox])
                 c_idx, r_idx = int(cx / col_w), int((cy / h) * num_rows)
 
-                if 0 <= r_idx < num_rows and 0 <= c_idx < num_cols:
-                    # OCR က သိပ်မသေချာရင် Template နဲ့ ထပ်စစ်မယ်
-                    if prob < 0.5: 
-                        x_min, y_min = int(min([p[0] for p in bbox])), int(min([p[1] for p in bbox]))
-                        x_max, y_max = int(max([p[0] for p in bbox])), int(max([p[1] for p in bbox]))
-                        roi = processed[y_min:y_max, x_min:x_max]
-                        matched = match_digit_from_image(roi)
-                        if matched: text = matched
-
-                    # စာသားသန့်စင်ခြင်း
-                    txt = clean_ocr_text(text)
+                if 0 <= r_idx < num_rows and 0 <= c_idx < active_cols:
+                    # Template Matching ကို ဦးစားပေးသုံးခြင်း
+                    x_min, y_min = int(min([p[0] for p in bbox])), int(min([p[1] for p in bbox]))
+                    x_max, y_max = int(max([p[0] for p in bbox])), int(max([p[1] for p in bbox]))
+                    roi = processed[y_min:y_max, x_min:x_max]
+                    matched = match_digit_from_image(roi)
                     
-                    if c_idx % 2 == 0: # Number Column
-                        nums = re.findall(r'\d+', txt)
-                        grid[r_idx][c_idx] = nums[0].zfill(3) if nums else txt
-                    else: # Amount Column
-                        nums = re.findall(r'\d+', txt)
-                        grid[r_idx][c_idx] = nums[0] if nums else ""
+                    final_text = matched if matched else text
+                    clean_txt = re.sub(r'[^0-9R]', '', final_text.upper())
 
-            # Ditto Logic (အပေါ်ကွက်အတိုင်း အောက်ကွက်ဖြည့်ခြင်း)
-            for c in range(num_cols):
+                    if c_idx % 2 == 0: # Number
+                        grid_data[r_idx][c_idx] = clean_txt.zfill(3) if (clean_txt.isdigit() and len(clean_txt)<=3) else clean_txt
+                    else: # Amount
+                        nums = re.findall(r'\d+', final_text)
+                        grid_data[r_idx][c_idx] = nums[0] if nums else ""
+
+            # Ditto Logic (Amount တိုင်အတွက်ပဲ သုံးပါမယ် - ဂဏန်းတိုင်က မတူတတ်လို့)
+            for c in range(1, active_cols, 2):
                 last_val = ""
                 for r in range(num_rows):
-                    if grid[r][c] == "" and last_val != "":
-                        grid[r][c] = last_val
-                    elif grid[r][c] != "":
-                        last_val = grid[r][c]
+                    if grid_data[r][c] == "": grid_data[r][c] = last_val
+                    else: last_val = grid_data[r][c]
 
-            st.session_state['data'] = grid
-            st.success("✅ အကုန်ဖတ်ပြီးပါပြီ။")
+            st.session_state['data_final'] = grid_data
+            st.success(f"Scanned {active_cols} Columns!")
 
-# ---------------- DISPLAY ----------------
-if 'data' in st.session_state:
-    edited = st.data_editor(st.session_state['data'], use_container_width=True)
-    # Upload button logic ဆက်ရေးရန်...
+# ---------------- 5. DATA EDITOR & UPLOAD ----------------
+if 'data_final' in st.session_state:
+    st.subheader("Edit Data Before Upload")
+    edited_data = st.data_editor(st.session_state['data_final'], use_container_width=True)
+
+    if st.button("🚀 Send to Google Sheet"):
+        try:
+            secret_info = json.loads(st.secrets["GCP_SERVICE_ACCOUNT_FILE"])
+            secret_info["private_key"] = secret_info["private_key"].replace("\\n", "\n")
+            creds = ServiceAccountCredentials.from_json_keyfile_dict(secret_info, ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"])
+            client = gspread.authorize(creds)
+            
+            ss = client.open("LotteryData")
+            sh1, sh2 = ss.get_worksheet(0), ss.get_worksheet(1)
+
+            # Upload Raw
+            sh1.append_rows(edited_data)
+
+            # Process Summary (R Logic)
+            master_sum = {}
+            for row in edited_data:
+                for i in range(0, len(row)-1, 2):
+                    if row[i] and row[i+1]:
+                        res = process_bet_logic(row[i], row[i+1])
+                        for k, v in res.items(): master_sum[k] = master_sum.get(k, 0) + v
+
+            sh2.clear()
+            final_summary = [[k, master_sum[k]] for k in sorted(master_sum.keys())]
+            sh2.append_rows([["Number", "Total"]] + final_summary)
+            st.success("✅ Data sent to Sheet 1 & Summary sent to Sheet 2!")
+        except Exception as e:
+            st.error(f"Error: {e}")
