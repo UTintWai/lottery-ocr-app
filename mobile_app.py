@@ -37,13 +37,18 @@ def process_bet_logic(num_txt, amt_txt):
 
 # --- SCAN FUNCTION ---
 def scan_voucher_final(img, active_cols, num_rows):
+    # ပုံကို နည်းနည်းသေးအောင်လုပ်ရင် ပိုမြန်ပါတယ်
+    img = cv2.resize(img, (0,0), fx=0.8, fy=0.8) 
+    
     gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
-    h, w = gray.shape
-    results = reader.readtext(gray, allowlist='0123456789R.*xX')
+    # paragraph=True ထည့်ရင် စာကြောင်းလိုက်ဖတ်လို့ ပိုမြန်နိုင်ပါတယ်
+    results = reader.readtext(gray, allowlist='0123456789R.*xX', detail=1) 
+    
+    # ... ကျန်တဲ့ code များ ...
     
     grid_data = [["" for _ in range(active_cols)] for _ in range(num_rows)]
-    col_edges = np.linspace(0, w, active_cols + 1)
-    row_edges = np.linspace(0, h, num_rows + 1)
+    col_edges = np.linspace(0, w, active_cols + 1) # type: ignore
+    row_edges = np.linspace(0, h, num_rows + 1) # type: ignore
 
     for (bbox, text, prob) in results:
         cx = np.mean([p[0] for p in bbox])
@@ -83,10 +88,10 @@ if 'sheet_data' in st.session_state:
                    
     if st.button("🚀 Send to Google Sheet"):
         try:
-            # 1. Secrets ကို ဖတ်ခြင်း
-            info = st.secrets["GCP_SERVICE_ACCOUNT_FILE"]
+            # dict(...) ဆိုတာကြီးကို ဖြုတ်လိုက်ပါ
+            info = st.secrets["GCP_SERVICE_ACCOUNT_FILE"] 
             
-            # 2. Credential Dictionary တည်ဆောက်ခြင်း
+            # ကျန်တဲ့ code တွေကို Tab (Indentation) မှန်အောင် တွန်းထားပါ
             creds_dict = {
                 "type": info["type"],
                 "project_id": info["project_id"],
