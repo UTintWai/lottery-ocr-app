@@ -14,41 +14,24 @@ st.set_page_config(page_title="Lottery Pro 2026 Stable", layout="wide")
 
 @st.cache_resource
 def load_ocr():
+    # EasyOCR ကို CPU နဲ့ သုံးတဲ့အခါ မြန်အောင် Settings အချို့ ညှိထားပါတယ်
     return easyocr.Reader(['en'], gpu=False)
 
 reader = load_ocr()
 
-# --- BET LOGIC ---
-def process_bet_logic(num_txt, amt_txt):
-    num = re.sub(r'[^0-9R]', '', str(num_txt))
-    amt_str = re.sub(r'[^0-9]', '', str(amt_txt))
-    amt = int(amt_str) if amt_str else 0
-    results = {}
-    if 'R' in num:
-        base = num.replace('R', '')
-        if len(base) == 3:
-            perms = sorted(list(set([''.join(p) for p in permutations(base)])))
-            for p in perms: results[p] = amt // len(perms) if len(perms) > 0 else 0
-        elif len(base) == 2:
-            results[base] = amt; results[base[::-1]] = amt
-    elif num:
-        results[num] = amt
-    return results
-
 # --- SCAN FUNCTION ---
 def scan_voucher_final(img, active_cols, num_rows):
-    # ပုံကို နည်းနည်းသေးအောင်လုပ်ရင် ပိုမြန်ပါတယ်
-    img = cv2.resize(img, (0,0), fx=0.8, fy=0.8) 
-    
+    # ၁။ ပုံကို ၅၀% ချုံ့လိုက်ပါ (OCR ပိုမြန်သွားပါမယ်)
+    img = cv2.resize(img, (0,0), fx=0.5, fy=0.5) 
     gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
-    # paragraph=True ထည့်ရင် စာကြောင်းလိုက်ဖတ်လို့ ပိုမြန်နိုင်ပါတယ်
+    h, w = gray.shape # ပုံရဲ့ အမြင့်နဲ့ အနံကို ယူပါတယ်
+
+    # ၂။ detail=1 ထားမှ တည်နေရာ သိမှာပါ၊ ဒါပေမယ့် စာသားပဲ သီးသန့်ဖတ်ခိုင်းထားပါတယ်
     results = reader.readtext(gray, allowlist='0123456789R.*xX', detail=1) 
     
-    # ... ကျန်တဲ့ code များ ...
-    
     grid_data = [["" for _ in range(active_cols)] for _ in range(num_rows)]
-    col_edges = np.linspace(0, w, active_cols + 1) # type: ignore
-    row_edges = np.linspace(0, h, num_rows + 1) # type: ignore
+    col_edges = np.linspace(0, w, active_cols + 1)
+    row_edges = np.linspace(0, h, num_rows + 1)
 
     for (bbox, text, prob) in results:
         cx = np.mean([p[0] for p in bbox])
@@ -77,21 +60,22 @@ if uploaded_file:
     st.image(img, use_container_width=True)
 
     if st.button("🔍 Scan စတင်မည်"):
-        with st.spinner("ဖတ်နေပါသည်..."):
+        with st.spinner("ဖတ်နေပါသည် (၁ မိနစ်ခန့် ကြာနိုင်သည်)..."):
             data = scan_voucher_final(img, a_cols, n_rows)
             st.session_state['sheet_data'] = data
 
 # --- EDIT & SEND TO SHEET ---
 if 'sheet_data' in st.session_state:
     st.subheader("📝 Edit Data")
+    # data_editor ကနေ ရလာတဲ့ data ကို တိုက်ရိုက် သုံးပါမယ်
     edited_df = st.data_editor(st.session_state['sheet_data'], use_container_width=True)
-                   
+                    
     if st.button("🚀 Send to Google Sheet"):
         try:
-            # dict(...) ဆိုတာကြီးကို ဖြုတ်လိုက်ပါ
+            # ၁။ Secrets ကို ဖတ်ခြင်း (dict() မသုံးပါနဲ့)
             info = st.secrets["GCP_SERVICE_ACCOUNT_FILE"] 
             
-            # ကျန်တဲ့ code တွေကို Tab (Indentation) မှန်အောင် တွန်းထားပါ
+            # ၂။ Credential dictionary ပြန်ဖွဲ့ခြင်း
             creds_dict = {
                 "type": info["type"],
                 "project_id": info["project_id"],
@@ -105,7 +89,6 @@ if 'sheet_data' in st.session_state:
                 "client_x509_cert_url": info["client_x509_cert_url"]
             }
             
-            # 3. Google Sheets ချိတ်ဆက်ခြင်း
             scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
             creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
             client = gspread.authorize(creds)
@@ -113,8 +96,8 @@ if 'sheet_data' in st.session_state:
             ss = client.open("LotteryData")
             sh1 = ss.get_worksheet(0)
             
-            # 4. Data ပို့ခြင်း (edited_df က List ဖြစ်နေရင် values.tolist() သုံးစရာမလိုပါ)
-            # စာသားအလွတ်မဟုတ်တဲ့ Row တွေကိုပဲ စစ်ထုတ်ပြီး ပို့ပါမယ်
+            # ၃။ ဒေတာ သန့်စင်ပြီး ပို့ခြင်း
+            # edited_df သည် list ဖြစ်နေသောကြောင့် values.tolist() သုံးရန်မလိုပါ
             clean_rows = [row for row in edited_df if any(str(cell).strip() for cell in row)]
             
             if clean_rows:
@@ -124,4 +107,4 @@ if 'sheet_data' in st.session_state:
                 st.warning("ပို့စရာ ဒေတာ မရှိပါဘူး။")
 
         except Exception as e:
-            st.error(f"Error တက်နေပါတယ်: {str(e)}")
+            st.error(f"Error: {str(e)}")
