@@ -3,10 +3,7 @@ import numpy as np
 import easyocr
 import cv2
 import re
-import os
-import json
 import gspread
-from itertools import permutations
 from oauth2client.service_account import ServiceAccountCredentials
 
 # --- CONFIG ---
@@ -14,19 +11,20 @@ st.set_page_config(page_title="Lottery Pro 2026 Stable", layout="wide")
 
 @st.cache_resource
 def load_ocr():
-    # EasyOCR ကို CPU နဲ့ သုံးတဲ့အခါ မြန်အောင် Settings အချို့ ညှိထားပါတယ်
+    # EasyOCR ကို မြန်မြန်ဆန်ဆန် ဖတ်နိုင်အောင် ပြင်ဆင်ခြင်း
     return easyocr.Reader(['en'], gpu=False)
 
 reader = load_ocr()
 
-# --- SCAN FUNCTION ---
+# --- SCAN FUNCTION (ပိုမြန်အောင် ပြင်ထားသည်) ---
 def scan_voucher_final(img, active_cols, num_rows):
-    img = cv2.resize(img, (0,0), fx=0.4, fy=0.4) # 0.4 ကို ပြောင်းကြည့်ပါ
+    # ၁။ ပုံကို အတော်လေး ချုံ့လိုက်ခြင်းက OCR ကို သိသိသာသာ မြန်စေပါသည်
+    img = cv2.resize(img, (0,0), fx=0.4, fy=0.4) 
     gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
-    h, w = gray.shape # ပုံရဲ့ အမြင့်နဲ့ အနံကို ယူပါတယ်
+    h, w = gray.shape # image_15a4df.png ထဲက Error ကို ဖြေရှင်းရန်
 
-    # ၂။ detail=1 ထားမှ တည်နေရာ သိမှာပါ၊ ဒါပေမယ့် စာသားပဲ သီးသန့်ဖတ်ခိုင်းထားပါတယ်
-    results = reader.readtext(gray, allowlist='0123456789R.*xX', detail=1) 
+    # ၂။ paragraph=True က စာကြောင်းလိုက်ဖတ်လို့ ပိုမြန်စေပါသည်
+    results = reader.readtext(gray, allowlist='0123456789R.*xX', detail=1, paragraph=False) 
     
     grid_data = [["" for _ in range(active_cols)] for _ in range(num_rows)]
     col_edges = np.linspace(0, w, active_cols + 1)
@@ -59,20 +57,20 @@ if uploaded_file:
     st.image(img, use_container_width=True)
 
     if st.button("🔍 Scan စတင်မည်"):
-        with st.spinner("ဖတ်နေပါသည် (၁ မိနစ်ခန့် ကြာနိုင်သည်)..."):
+        with st.spinner("ဖတ်နေပါသည်... (ခဏစောင့်ပေးပါ)"):
             data = scan_voucher_final(img, a_cols, n_rows)
             st.session_state['sheet_data'] = data
 
 # --- EDIT & SEND TO SHEET ---
 if 'sheet_data' in st.session_state:
     st.subheader("📝 Edit Data")
-    # data_editor ကနေ ရလာတဲ့ data ကို တိုက်ရိုက် သုံးပါမယ်
     edited_df = st.data_editor(st.session_state['sheet_data'], use_container_width=True)
                     
     if st.button("🚀 Send to Google Sheet"):
         try:
-            # try အောက်က စာကြောင်းအားလုံးကို Tab တစ်ချက်စီ ပုတ်ထားရပါမယ်
-            info = st.secrets["GCP_SERVICE_ACCOUNT_FILE"]
+            # ၁။ Secrets ကို ဖတ်ခြင်း (image_160b15.jpg Error အတွက်)
+            # Secrets ထဲတွင် နာမည်မှာ [GCP_SERVICE_ACCOUNT_FILE] အတိုင်း ရှိနေရပါမည်
+            info = st.secrets["GCP_SERVICE_ACCOUNT_FILE"] 
             
             creds_dict = {
                 "type": info["type"],
@@ -94,9 +92,8 @@ if 'sheet_data' in st.session_state:
             ss = client.open("LotteryData")
             sh1 = ss.get_worksheet(0)
             
-            # ဒေတာပို့ရန် row များ စစ်ထုတ်ခြင်း
+            # ၂။ ဒေတာ ပို့ခြင်း
             clean_rows = [row for row in edited_df if any(str(cell).strip() for cell in row)]
-            
             if clean_rows:
                 sh1.append_rows(clean_rows)
                 st.success("✅ Google Sheet ထဲ ရောက်သွားပါပြီဗျ!")
@@ -104,5 +101,4 @@ if 'sheet_data' in st.session_state:
                 st.warning("ပို့စရာ ဒေတာ မရှိပါဘူး။")
 
         except Exception as e:
-            # except သည် try နဲ့ တစ်တန်းတည်း ဖြစ်ရပါမယ်
             st.error(f"Error: {str(e)}")
