@@ -9,85 +9,98 @@ import gspread
 from itertools import permutations
 from oauth2client.service_account import ServiceAccountCredentials
 
-# ---------------- CONFIG ----------------
-st.set_page_config(page_title="Lottery Pro 2026 Precise", layout="wide")
+st.set_page_config(page_title="Lottery Pro 2026 Smart Grid", layout="wide")
 
 @st.cache_resource
 def load_ocr():
-    # OCR ကို ပိုမိုတိကျအောင် အင်္ဂလိပ်စာလုံးအတွက် သတ်မှတ်သည်
     return easyocr.Reader(['en'], gpu=False)
 
-@st.cache_resource
-def load_digit_templates():
-    templates = {}
-    # လက်ရှိ folder ထဲက templates လမ်းကြောင်းကို စစ်ဆေးသည်
-    temp_path = os.path.join(os.getcwd(), "templates")
-    if os.path.exists(temp_path):
-        for filename in os.listdir(temp_path):
-            if filename.lower().endswith(('.png', '.jpg', '.jpeg')):
-                img = cv2.imread(os.path.join(temp_path, filename), 0)
-                if img is not None:
-                    _, img = cv2.threshold(img, 127, 255, cv2.THRESH_BINARY_INV)
-                    digit_name = filename.split('.')[0].split('_')[0]
-                    templates[digit_name] = cv2.resize(img, (28, 28))
-    return templates
-
 reader = load_ocr()
-digit_templates = load_digit_templates()
 
-def process_bet_logic(num_txt, amt_txt):
-    num_clean = re.sub(r'[^0-9R.]', '', str(num_txt).upper())
-    amt_clean = re.sub(r'[^0-9]', '', str(amt_txt))
-    amt = int(amt_clean) if amt_clean else 0
-    results = {}
-    if 'R' in num_clean:
-        base = num_clean.replace('R', '').replace('.', '')
-        if len(base) == 3:
-            perms = sorted(list(set([''.join(p) for p in permutations(base)])))
-            split_amt = amt // len(perms) if len(perms) > 0 else 0
-            for p in perms: results[p] = split_amt
-        else:
-            results[base] = amt
-    elif num_clean and num_clean != ".":
-        results[num_clean] = amt
-    return results
-
-# ---------------- 2. HYBRID RECOGNITION ----------------
-def get_hybrid_text(roi_gray):
-    """ Template Matching မရလျှင် OCR ဖြင့် အရန်သင့်ဖတ်ပေးမည့် Logic """
-    # ၁။ ပုံရိပ်ကို အဖြူအမည်းပြောင်းခြင်း
-    thresh = cv2.threshold(roi_gray, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)[1]
+# ---------------- 1. SMART GRID DETECTION ----------------
+def get_grid_cells(img_gray, active_cols, num_rows):
+    """ Voucher ထဲက ဇယားကွက်တွေကို တိတိကျကျ ပိုင်းဖြတ်ပေးမည့် logic """
+    h, w = img_gray.shape
     
-    best_score = -1
-    best_match = ""
+    # မျဉ်းကြောင်းများကို ပေါ်လွင်အောင်လုပ်ခြင်း
+    thresh = cv2.adaptiveThreshold(img_gray, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, 
+                                   cv2.THRESH_BINARY_INV, 11, 2)
     
-    # ၂။ Template Matching စမ်းကြည့်ခြင်း
-    if digit_templates:
-        test_roi = cv2.resize(thresh, (28, 28))
-        for name, temp in digit_templates.items():
-            res = cv2.matchTemplate(test_roi, temp, cv2.TM_CCOEFF_NORMED)
-            _, max_val, _, _ = cv2.minMaxLoc(res)
-            if max_val > best_score:
-                best_score = max_val
-                best_match = name
+    # အလျားလိုက်နှင့် ဒေါင်လိုက် မျဉ်းများကို ရှာဖွေခြင်း
+    horizontal_kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (w // 30, 1))
+    vertical_kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (1, h // 30))
     
-    # ၃။ Template Match ၇၀% ထက်ကျော်မှ ယူမည်၊ မဟုတ်လျှင် OCR ဖြင့် ဖတ်မည်
-    if best_score > 0.7:
-        return best_match
+    hor_lines = cv2.erode(thresh, horizontal_kernel, iterations=1)
+    hor_lines = cv2.dilate(hor_lines, horizontal_kernel, iterations=1)
+    
+    ver_lines = cv2.erode(thresh, vertical_kernel, iterations=1)
+    ver_lines = cv2.dilate(ver_lines, vertical_kernel, iterations=1)
+    
+    # မျဉ်းများ မတွေ့ပါက ပုံသေ Grid စနစ်သို့ ပြန်ပြောင်းသုံးမည်
+    hor_sum = np.sum(hor_lines, axis=1)
+    ver_sum = np.sum(ver_lines, axis=0)
+    
+    row_boundaries = np.where(hor_sum > (w * 0.5 * 255))[0]
+    col_boundaries = np.where(ver_sum > (h * 0.5 * 255))[0]
+    
+    # မျဉ်းကြောင်းများ တိကျစွာ မတွေ့ပါက (စက္ကူမှာ မျဉ်းမပါလျှင်) ပုံသေ အချိုးချမည်
+    rows = []
+    if len(row_boundaries) < 2:
+        rows = np.linspace(0, h, num_rows + 1).astype(int)
     else:
-        # OCR ဖြင့် တိုက်ရိုက်ဖတ်ခြင်း (ဂဏန်းသီးသန့်)
-        results = reader.readtext(roi_gray, allowlist='0123456789R.')
-        if results:
-            return results[0][1] # OCR ဖတ်လို့ရတဲ့ စာသားကို ပြန်ပေးမယ်
-    return ""
+        # မျဉ်းကြောင်းများအကြား အကွာအဝေးကို တွက်ချက်ခြင်း
+        rows = [row_boundaries[0]]
+        for i in range(1, len(row_boundaries)):
+            if row_boundaries[i] - rows[-1] > h // (num_rows * 2):
+                rows.append(row_boundaries[i])
+        if len(rows) <= num_rows: rows = np.linspace(0, h, num_rows + 1).astype(int)
 
-# ---------------- 3. MAIN UI ----------------
+    cols = np.linspace(0, w, active_cols + 1).astype(int)
+    
+    return rows, cols
+
+# ---------------- 2. MAIN LOGIC ----------------
+def scan_voucher(img, active_cols, num_rows):
+    gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+    rows, cols = get_grid_cells(gray, active_cols, num_rows)
+    
+    grid_data = [["" for _ in range(active_cols)] for _ in range(num_rows)]
+    
+    # OCR ကို တစ်ကွက်ချင်းစီထက် အုပ်စုလိုက် ဖတ်ခိုင်းခြင်းက ပိုမြန်ပြီး တိကျသည်
+    results = reader.readtext(gray, allowlist='0123456789R.xX')
+    
+    for (bbox, text, prob) in results:
+        # စာလုံး၏ ဗဟိုချက်ကို ရှာသည်
+        cx = np.mean([p[0] for p in bbox])
+        cy = np.mean([p[1] for p in bbox])
+        
+        # မည်သည့် အကွက်ထဲတွင် ရှိနေသလဲ ရှာဖွေခြင်း
+        c_idx = -1
+        for i in range(len(cols)-1):
+            if cols[i] <= cx <= cols[i+1]:
+                c_idx = i
+                break
+        
+        r_idx = -1
+        for i in range(len(rows)-1):
+            if rows[i] <= cy <= rows[i+1]:
+                r_idx = i
+                break
+                
+        if r_idx != -1 and c_idx != -1 and r_idx < num_rows:
+            # ဂဏန်းများ သန့်စင်ခြင်း (ဥပမာ x ကို * ပြောင်းခြင်း)
+            clean_text = text.replace('x', '*').replace('X', '*')
+            grid_data[r_idx][c_idx] = clean_text
+            
+    return grid_data
+
+# ---------------- 3. STREAMLIT UI ----------------
 with st.sidebar:
     st.header("⚙️ Settings")
     active_cols = st.selectbox("အတိုင်အရေအတွက်", [2, 4, 6, 8], index=2)
     num_rows = st.number_input("အတန်းအရေအတွက်", min_value=1, value=25)
 
-uploaded_file = st.file_uploader("Voucher ပုံတင်ပါ", type=["jpg","jpeg","png"])
+uploaded_file = st.file_uploader("Voucher တင်ပါ", type=["jpg","png","jpeg"])
 
 if uploaded_file:
     file_bytes = np.asarray(bytearray(uploaded_file.read()), dtype=np.uint8)
@@ -95,49 +108,10 @@ if uploaded_file:
     st.image(img, channels="BGR", use_container_width=True)
 
     if st.button("🔍 Scan စတင်မည်"):
-        with st.spinner("ဂဏန်းများပေါ်လာအောင် ဖတ်နေပါသည်..."):
-            gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
-            h, w = gray.shape
-            row_h = h / num_rows
-            col_w = w / active_cols
-            grid_data = [["" for _ in range(active_cols)] for _ in range(num_rows)]
+        with st.spinner("ဇယားကွက်များနှင့် ဂဏန်းများကို တိုက်စစ်နေသည်..."):
+            final_data = scan_voucher(img, active_cols, num_rows)
+            st.session_state['data_final'] = final_data
+            st.success("Scanning ပြီးပါပြီ!")
 
-            for r in range(num_rows):
-                for c in range(active_cols):
-                    y1, y2 = int(r * row_h), int((r + 1) * row_h)
-                    x1, x2 = int(c * col_w), int((c + 1) * col_w)
-                    # အစွန်းတွေကို ဖယ်ပြီး ချက်ခြင်းဖတ်မယ်
-                    roi = gray[y1+2:y2-2, x1+2:x2-2]
-                    grid_data[r][c] = get_hybrid_text(roi)
-
-            st.session_state['data_final'] = grid_data
-            st.success("✅ Scanning ပြီးပါပြီ။")
-
-# ---------------- 4. DISPLAY & SHEET ----------------
 if 'data_final' in st.session_state:
-    edited_data = st.data_editor(st.session_state['data_final'], use_container_width=True)
-
-    if st.button("🚀 Send to Google Sheet"):
-        try:
-            # (Google Sheet logic is same as before)
-            secret_info = json.loads(st.secrets["GCP_SERVICE_ACCOUNT_FILE"])
-            secret_info["private_key"] = secret_info["private_key"].replace("\\n", "\n")
-            creds = ServiceAccountCredentials.from_json_keyfile_dict(secret_info, ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"])
-            client = gspread.authorize(creds)
-            ss = client.open("LotteryData")
-            sh1, sh2 = ss.get_worksheet(0), ss.get_worksheet(1)
-            sh1.append_rows(edited_data)
-
-            master_sum = {}
-            for row in edited_data:
-                for i in range(0, len(row)-1, 2):
-                    if row[i] and row[i+1]:
-                        res = process_bet_logic(row[i], row[i+1])
-                        for k, v in res.items(): master_sum[k] = master_sum.get(k, 0) + v
-
-            sh2.clear()
-            final_summary = [[k, master_sum[k]] for k in sorted(master_sum.keys())]
-            sh2.append_rows([["Number", "Total"]] + final_summary)
-            st.success("✅ Google Sheet သို့ ပို့ဆောင်ပြီးပါပြီ။")
-        except Exception as e:
-            st.error(f"Error: {e}")
+    st.data_editor(st.session_state['data_final'], use_container_width=True)
