@@ -80,44 +80,41 @@ if uploaded_file:
 if 'sheet_data' in st.session_state:
     st.subheader("📝 Edit Data")
     edited_df = st.data_editor(st.session_state['sheet_data'], use_container_width=True)
-    
+                   
     if st.button("🚀 Send to Google Sheet"):
         try:
-            if "GCP_SERVICE_ACCOUNT_FILE" not in st.secrets:
-                st.error("Secrets JSON key missing!")
-                st.stop()
-                
-            info = dict(st.secrets["GCP_SERVICE_ACCOUNT_FILE"])
-            info["private_key"] = info["private_key"].replace("\\n", "\n")
+            # try အောက်က စာကြောင်းတွေအားလုံး ညာဘက်ကို Tab (Space 4 ခု) တိတိကျကျ ပုတ်ပေးရပါမယ်
+            info = st.secrets["GCP_SERVICE_ACCOUNT_FILE"]
             
-            creds = ServiceAccountCredentials.from_json_keyfile_dict(info, 
-                    ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"])
+            # Credential dictionary တည်ဆောက်ခြင်း
+            creds_dict = {
+                "type": info["type"],
+                "project_id": info["project_id"],
+                "private_key_id": info["private_key_id"],
+                "private_key": info["private_key"].replace("\\n", "\n"),
+                "client_email": info["client_email"],
+                "client_id": info["client_id"],
+                "auth_uri": info["auth_uri"],
+                "token_uri": info["token_uri"],
+                "auth_provider_x509_cert_url": info["auth_provider_x509_cert_url"],
+                "client_x509_cert_url": info["client_x509_cert_url"]
+            }
+            
+            scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
+            creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
             client = gspread.authorize(creds)
             
             ss = client.open("LotteryData")
             sh1 = ss.get_worksheet(0)
-            sh2 = ss.get_worksheet(1)
             
-            clean_rows = [row for row in edited_df if any(row)]
+            # edited_df ကို row အဖြစ်ပြောင်းပြီး ပို့ခြင်း
+            clean_rows = edited_df.values.tolist()
             if clean_rows:
                 sh1.append_rows(clean_rows)
-                
-                # Summary Logic
-                master_sum = {}
-                for row in edited_df:
-                    for i in range(0, len(row)-1, 2):
-                        if row[i] and row[i+1]:
-                            res = process_bet_logic(row[i], row[i+1])
-                            for k, v in res.items():
-                                master_sum[k] = master_sum.get(k, 0) + v
-                
-                if master_sum:
-                    sh2.clear()
-                    summary_list = [[k, v] for k, v in sorted(master_sum.items())]
-                    sh2.append_rows([["Number", "Amount"]] + summary_list)
-                
-                st.success("✅ Google Sheet သို့ ပို့ဆောင်ပြီးပါပြီ။")
+                st.success("✅ Google Sheet ထဲ ရောက်သွားပါပြီဗျ!")
             else:
-                st.warning("ပို့ရန် ဒေတာမရှိပါ။")
+                st.warning("ပို့စရာ ဒေတာ မရှိပါဘူး။")
+
         except Exception as e:
-            st.error(f"Error: {e}")
+            # except သည် try နဲ့ အတိအကျ တစ်တန်းတည်း ဖြစ်ရပါမယ်
+            st.error(f"Error တက်နေပါတယ်: {str(e)}")
