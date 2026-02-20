@@ -11,34 +11,39 @@ st.set_page_config(page_title="Lottery Pro 2026 Stable", layout="wide")
 
 @st.cache_resource
 def load_ocr():
-    # CPU သုံးထားလို့ မြန်အောင် optimzed လုပ်ထားပါတယ်
+    # CPU အခြေအနေတွင် မြန်ဆန်စေရန် Setting များ ညှိထားပါသည်
     return easyocr.Reader(['en'], gpu=False)
 
 reader = load_ocr()
 
-# --- SCAN FUNCTION (အမြန်နှုန်းအတွက် ပြင်ဆင်ထားသည်) ---
+# --- SCAN FUNCTION (၈ တိုင်လုံး ဖတ်နိုင်ရန် ပြင်ထားသည်) ---
 def scan_voucher_final(img, active_cols, num_rows):
-    # ၁။ ပုံကို ၄၀% အထိ ချုံ့လိုက်ခြင်းဖြင့် OCR ဖတ်နှုန်းကို ၅ ဆလောက် မြန်စေပါသည်
-    img_resized = cv2.resize(img, (0,0), fx=0.4, fy=0.4) 
+    # ၁။ ပုံကို ၅၀% ချုံ့လိုက်ခြင်းဖြင့် OCR ဖတ်နှုန်း မြန်စေပါသည်
+    img_resized = cv2.resize(img, (0,0), fx=0.5, fy=0.5) 
     gray = cv2.cvtColor(img_resized, cv2.COLOR_BGR2GRAY)
-    h, w = gray.shape # ပုံရဲ့ အရွယ်အစားကို ယူခြင်း
+    h, w = gray.shape # image_15a4df.png ထဲက NameError ကို ဖြေရှင်းရန်
 
-    # ၂။ detail=1 ထားမှ တည်နေရာ သိနိုင်မှာပါ
+    # ၂။ OCR ဖတ်ခြင်း (detail=1 ထားမှ တည်နေရာ သိနိုင်ပါသည်)
     results = reader.readtext(gray, allowlist='0123456789R.*xX', detail=1) 
     
+    # ၃။ Grid data တည်ဆောက်ခြင်း
     grid_data = [["" for _ in range(active_cols)] for _ in range(num_rows)]
     col_edges = np.linspace(0, w, active_cols + 1)
     row_edges = np.linspace(0, h, num_rows + 1)
 
+    # ၄။ ရလာသော စာသားများကို Grid ထဲသို့ ထည့်ခြင်း
     for (bbox, text, prob) in results:
         cx = np.mean([p[0] for p in bbox])
         cy = np.mean([p[1] for p in bbox])
+        
         c = np.searchsorted(col_edges, cx) - 1
         r = np.searchsorted(row_edges, cy) - 1
         
+        # Grid ဘောင်အတွင်းရှိသော စာသားများကိုသာ ယူပါသည်
         if 0 <= r < num_rows and 0 <= c < active_cols:
             t = text.upper().replace('X', '*')
             grid_data[r][c] = t
+            
     return grid_data
 
 # --- UI ---
@@ -57,19 +62,19 @@ if uploaded_file:
     st.image(img, use_container_width=True)
 
     if st.button("🔍 Scan စတင်မည်"):
-        with st.spinner("ဖတ်နေပါသည်..."):
+        with st.spinner("ဖတ်နေပါသည် (၁ မိနစ်ခန့် ကြာနိုင်ပါသည်)..."):
             data = scan_voucher_final(img, a_cols, n_rows)
             st.session_state['sheet_data'] = data
 
 # --- EDIT & SEND TO SHEET ---
 if 'sheet_data' in st.session_state:
     st.subheader("📝 Edit Data")
-    # data_editor ကနေ ရလာတဲ့ ဒေတာကို တိုက်ရိုက်ယူသုံးပါမည်
+    # အရင်ထွက်လာသော data ကို ပြင်ဆင်ရန်
     edited_data = st.data_editor(st.session_state['sheet_data'], use_container_width=True)
                     
     if st.button("🚀 Send to Google Sheet"):
         try:
-            # ၁။ Secrets ကို ဖတ်ခြင်း (GCP_SERVICE_ACCOUNT_FILE ဟု Dashboard တွင် ပေးထားရပါမည်)
+            # ၁။ Secrets ဖတ်ခြင်း
             info = st.secrets["GCP_SERVICE_ACCOUNT_FILE"] 
             
             creds_dict = {
@@ -89,10 +94,11 @@ if 'sheet_data' in st.session_state:
             creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
             client = gspread.authorize(creds)
             
+            # ၂။ Sheet ဖွင့်ခြင်း
             ss = client.open("LotteryData")
             sh1 = ss.get_worksheet(0)
             
-            # ၂။ အလွတ်မဟုတ်သော Row များကို စစ်ထုတ်ပြီး ပို့ဆောင်ခြင်း
+            # ၃။ အလွတ်မဟုတ်သော ဒေတာများကိုသာ ပို့ခြင်း
             clean_rows = [row for row in edited_data if any(str(cell).strip() for cell in row)]
             
             if clean_rows:
