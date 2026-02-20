@@ -57,24 +57,36 @@ def process_bet_logic(num_txt, amt_txt):
 # ---------------- 2. IMPROVED RECOGNITION ----------------
 def get_best_match(roi_gray):
     if not digit_templates: return ""
-    _, thresh = cv2.threshold(roi_gray, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)
     
+    # ပုံကို အဖြူအမည်းပြောင်း (Adaptive သုံးရင် ပိုကောင်းပါတယ်)
+    thresh = cv2.adaptiveThreshold(roi_gray, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, 
+                                   cv2.THRESH_BINARY_INV, 11, 2)
+    
+    # ၁။ အစက် (Dot) ဟုတ်မဟုတ် စစ်ဆေးခြင်း
     contours, _ = cv2.findContours(thresh, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
     if contours:
         c = max(contours, key=cv2.contourArea)
         x, y, w, h = cv2.boundingRect(c)
-        if w < 12 and h < 12: return "." # အစက်အပြောက်ဆိုလျှင် . ဟုယူမည်
+        if w < 10 and h < 10: return "." 
 
+    # ၂။ Template Matching
     best_score = -1
     best_match = ""
+    
+    # Template နဲ့ အရွယ်အစား တူအောင် ညှိမယ်
     test_roi = cv2.resize(thresh, (28, 28))
+    
     for name, temp in digit_templates.items():
         res = cv2.matchTemplate(test_roi, temp, cv2.TM_CCOEFF_NORMED)
         _, max_val, _, _ = cv2.minMaxLoc(res)
+        
         if max_val > best_score:
             best_score = max_val
             best_match = name
-    return best_match if best_score > 0.4 else ""
+            
+    # အကယ်၍ Score အရမ်းနည်းနေရင် (0.2 ထက်နည်းရင်) ဘာမှမပြခိုင်းတော့ပါဘူး
+    # 0.2 ကျော်ရင်တော့ အနီးစပ်ဆုံးဂဏန်းကို ကျိန်းသေပြပေးပါလိမ့်မယ်
+    return best_match if best_score > 0.2 else ""
 
 # ---------------- 3. MAIN UI ----------------
 with st.sidebar:
