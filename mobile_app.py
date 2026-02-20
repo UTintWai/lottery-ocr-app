@@ -26,6 +26,7 @@ def load_digit_templates():
             if filename.lower().endswith(('.png', '.jpg', '.jpeg')):
                 img = cv2.imread(os.path.join(temp_path, filename), 0)
                 if img is not None:
+                    # Template ကို OCR နဲ့ တိုက်စစ်ဖို့ အဖြူအမည်းပြောင်းခြင်း
                     _, img = cv2.threshold(img, 127, 255, cv2.THRESH_BINARY_INV)
                     digit_name = filename.split('.')[0]
                     templates[digit_name] = cv2.resize(img, (28, 28))
@@ -34,18 +35,43 @@ def load_digit_templates():
 reader = load_ocr()
 digit_templates = load_digit_templates()
 
-# ---------------- 2. FUNCTIONS ----------------
-def match_digit_from_image(roi_gray):
+# ---------------- 2. HELPER FUNCTIONS ----------------
+def segment_and_match(roi_gray):
+    """ ပုံရိပ်တစ်ခုထဲက ဂဏန်းတွေကို တစ်လုံးချင်းခွဲပြီး Template နဲ့ တိုက်စစ်ခြင်း """
     if not digit_templates: return None
-    roi = cv2.resize(roi_gray, (28, 28))
-    _, roi = cv2.threshold(roi, 127, 255, cv2.THRESH_BINARY_INV)
-    best_score, best_digit = -1, None
-    for name, temp_img in digit_templates.items():
-        res = cv2.matchTemplate(roi, temp_img, cv2.TM_CCOEFF_NORMED)
-        _, max_val, _, _ = cv2.minMaxLoc(res)
-        if max_val > best_score:
-            best_score, best_digit = max_val, name
-    return best_digit if best_score > 0.5 else None
+    
+    # ပုံကို ကြည်လင်အောင် အရင်လုပ်မယ်
+    _, thresh = cv2.threshold(roi_gray, 127, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)
+    
+    # ဂဏန်းတစ်လုံးချင်းစီရဲ့ ပုံသဏ္ဌာန် (Contours) ကို ရှာမယ်
+    contours, _ = cv2.findContours(thresh, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    
+    if not contours: return None
+
+    # ဂဏန်းတွေကို ဘယ်ကနေ ညာ အစဉ်လိုက်စီမယ်
+    boxes = [cv2.boundingRect(c) for c in contours]
+    sorted_indices = np.argsort([b[0] for b in boxes])
+    
+    final_string = ""
+    for idx in sorted_indices:
+        x, y, w, h = boxes[idx]
+        if w > 5 and h > 10: # အမှိုက်တွေကို ဖယ်ထုတ်ဖို့
+            digit_roi = thresh[y:y+h, x:x+w]
+            digit_roi = cv2.resize(digit_roi, (28, 28))
+            
+            best_score = -1
+            best_digit = ""
+            for digit_name, temp_img in digit_templates.items():
+                res = cv2.matchTemplate(digit_roi, temp_img, cv2.TM_CCOEFF_NORMED)
+                _, max_val, _, _ = cv2.minMaxLoc(res)
+                if max_val > best_score:
+                    best_score = max_val
+                    best_digit = digit_name
+            
+            if best_score > 0.4: # တူညီမှု ၄၀% ကျော်မှ ယူမယ်
+                final_string += best_digit
+                
+    return final_string if final_string else None
 
 def process_bet_logic(num_txt, amt_txt):
     num_clean = re.sub(r'[^0-9R]', '', str(num_txt).upper())
@@ -79,9 +105,8 @@ if uploaded_file:
     st.image(img, channels="BGR", use_container_width=True)
 
     if st.button("🔍 Scan စတင်မည်"):
-        with st.spinner("ဖတ်နေသည်..."):
+        with st.spinner("တစ်ကွက်ချင်းစီကို သေချာဖတ်နေပါသည်..."):
             gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
-            # Image Enhancement
             clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
             processed = clahe.apply(gray)
             h, w = processed.shape
@@ -89,28 +114,33 @@ if uploaded_file:
             col_w = w / active_cols
             grid_data = [["" for _ in range(active_cols)] for _ in range(num_rows)]
 
+            # EasyOCR နဲ့ ပဏာမ စာလုံးတည်နေရာရှာခြင်း
             results = reader.readtext(processed)
+
             for (bbox, text, prob) in results:
+                # ဗဟိုချက်တွက်ခြင်း
                 cx, cy = np.mean([p[0] for p in bbox]), np.mean([p[1] for p in bbox])
                 c_idx, r_idx = int(cx // col_w), int((cy / h) * num_rows)
 
                 if 0 <= r_idx < num_rows and 0 <= c_idx < active_cols:
+                    # ROI ဖြတ်ထုတ်ခြင်း
                     x_min, y_min = int(min([p[0] for p in bbox])), int(min([p[1] for p in bbox]))
                     x_max, y_max = int(max([p[0] for p in bbox])), int(max([p[1] for p in bbox]))
-                    roi = processed[max(0,y_min):min(h,y_max), max(0,x_min):min(w,x_max)]
+                    roi = gray[max(0,y_min):min(h,y_max), max(0,x_min):min(w,x_max)]
                     
-                    # Template Match check
-                    matched = match_digit_from_image(roi)
-                    final_text = matched if (matched and prob < 0.6) else text
+                    # လက်ရေးကို တစ်လုံးချင်းခွဲဖတ်ခြင်း
+                    custom_text = segment_and_match(roi)
+                    final_text = custom_text if custom_text else text
                     
                     clean_txt = re.sub(r'[^0-9R]', '', str(final_text).upper())
+                    
                     if c_idx % 2 == 0: # ဂဏန်းတိုင်
                         grid_data[r_idx][c_idx] = clean_txt.zfill(3) if (clean_txt.isdigit() and len(clean_txt)<=3) else clean_txt
                     else: # ငွေပမာဏတိုင်
                         nums = re.findall(r'\d+', str(final_text))
                         grid_data[r_idx][c_idx] = nums[0] if nums else ""
 
-            # Ditto Logic for Amount
+            # Amount တိုင်အတွက် Ditto Logic
             for c in range(1, active_cols, 2):
                 last_val = ""
                 for r in range(num_rows):
@@ -118,7 +148,7 @@ if uploaded_file:
                     else: last_val = grid_data[r][c]
 
             st.session_state['data_final'] = grid_data
-            st.success("ဖတ်လို့ပြီးပါပြီ။")
+            st.success("✅ ဖတ်လို့ပြီးပါပြီ။ အောက်ကဇယားတွင် စစ်ဆေးနိုင်ပါသည်။")
 
 # ---------------- 5. SHEET UPLOAD ----------------
 if 'data_final' in st.session_state:
@@ -134,7 +164,6 @@ if 'data_final' in st.session_state:
             
             ss = client.open("LotteryData")
             sh1, sh2 = ss.get_worksheet(0), ss.get_worksheet(1)
-
             sh1.append_rows(edited_data)
 
             master_sum = {}
@@ -147,6 +176,6 @@ if 'data_final' in st.session_state:
             sh2.clear()
             final_summary = [[k, master_sum[k]] for k in sorted(master_sum.keys())]
             sh2.append_rows([["Number", "Total"]] + final_summary)
-            st.success("✅ အောင်မြင်စွာ ပို့ဆောင်ပြီးပါပြီ။")
+            st.success("✅ Google Sheet သို့ အောင်မြင်စွာ ပို့ဆောင်ပြီးပါပြီ။")
         except Exception as e:
             st.error(f"Error: {e}")
