@@ -37,45 +37,57 @@ digit_templates = load_digit_templates()
 def segment_and_match(roi_gray):
     if not digit_templates: return None
     
-    # Noise လျှော့ချပြီး စာလုံးကို ပေါ်အောင်လုပ်ခြင်း
-    processed = cv2.medianBlur(roi_gray, 3)
-    _, thresh = cv2.threshold(processed, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)
+    # ၁။ ပုံရိပ်ကို သန့်စင်ခြင်း
+    _, thresh = cv2.threshold(roi_gray, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)
     
-    # စာလုံးတွေ ပူးနေရင် ခွဲဖို့ Erosion အနည်းငယ် သုံးခြင်း
-    kernel = np.ones((2,2), np.uint8)
-    thresh = cv2.erode(thresh, kernel, iterations=1)
+    # ၂။ ဦးစွာ အစုလိုက် Template (ဥပမာ - 222, 100) တွေနဲ့ တိုက်စစ်ကြည့်မယ်
+    best_overall_score = -1
+    best_overall_match = ""
+    
+    h_roi, w_roi = thresh.shape
+    for name, temp_img in digit_templates.items():
+        # Template ကို ROI အရွယ်အစားနဲ့ ညှိပြီး တိုက်စစ်ခြင်း
+        temp_resized = cv2.resize(temp_img, (w_roi, h_roi))
+        res = cv2.matchTemplate(thresh, temp_resized, cv2.TM_CCOEFF_NORMED)
+        _, max_val, _, _ = cv2.minMaxLoc(res)
+        
+        if max_val > best_overall_score:
+            best_overall_score = max_val
+            best_overall_match = name
 
+    # အကယ်၍ ၈၀% ကျော် တူညီရင် အစုလိုက် (ဥပမာ 222) ကိုပဲ တိုက်ရိုက်ယူမယ်
+    if best_overall_score > 0.8:
+        return best_overall_match
+
+    # ၃။ အကယ်၍ အစုလိုက် တိုက်စစ်လို့ မရရင် တစ်လုံးချင်းစီ ခွဲထုတ်မယ် (Segmentation)
     contours, _ = cv2.findContours(thresh, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-    
     digit_list = []
     for c in contours:
         x, y, w, h = cv2.boundingRect(c)
-        # ဂဏန်း ဖြစ်နိုင်ချေရှိတဲ့ အရွယ်အစားကို စစ်ထုတ်ခြင်း (အရမ်းသေးရင် ဖယ်မယ်)
-        if h > 12 and w > 4: 
+        if h > 10 and w > 2: # Noise ဖယ်ခြင်း
             digit_list.append((x, y, w, h))
     
-    # ဘယ်မှညာ အစဉ်လိုက် စီမယ်
-    digit_list.sort(key=lambda x: x[0])
+    digit_list.sort(key=lambda x: x[0]) # ဘယ်မှညာ စီခြင်း
     
     final_string = ""
     for x, y, w, h in digit_list:
         digit_roi = thresh[y:y+h, x:x+w]
-        # ဘေးပတ်လည် space အနည်းငယ် ထည့်ခြင်း
-        digit_roi = cv2.copyMakeBorder(digit_roi, 4, 4, 4, 4, cv2.BORDER_CONSTANT, value=0)
         digit_roi = cv2.resize(digit_roi, (28, 28))
         
-        best_score = -1
+        best_digit_score = -1
         best_digit = ""
+        # တစ်လုံးချင်း Templates (0-9) တွေနဲ့ပဲ ပြန်တိုက်မယ်
         for name, temp_img in digit_templates.items():
-            res = cv2.matchTemplate(digit_roi, temp_img, cv2.TM_CCOEFF_NORMED)
-            _, max_val, _, _ = cv2.minMaxLoc(res)
-            if max_val > best_score:
-                best_score = max_val
-                best_digit = name
+            if len(name) == 1: # 0-9 Templates တွေကိုပဲ ယူသုံးဖို့
+                res = cv2.matchTemplate(digit_roi, temp_img, cv2.TM_CCOEFF_NORMED)
+                _, max_val, _, _ = cv2.minMaxLoc(res)
+                if max_val > best_digit_score:
+                    best_digit_score = max_val
+                    best_digit = name
         
-        if best_score > 0.35: # အနည်းဆုံး ၃၅ ရာခိုင်နှုန်း တူမှ ယူမယ်
+        if best_digit_score > 0.4:
             final_string += best_digit
-                
+            
     return final_string if final_string else None
 
 def process_bet_logic(num_txt, amt_txt):
