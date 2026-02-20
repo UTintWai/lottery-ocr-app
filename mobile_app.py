@@ -83,10 +83,10 @@ if 'sheet_data' in st.session_state:
                    
     if st.button("🚀 Send to Google Sheet"):
         try:
-            # try အောက်က စာကြောင်းတွေအားလုံး ညာဘက်ကို Tab (Space 4 ခု) တိတိကျကျ ပုတ်ပေးရပါမယ်
+            # 1. Secrets ကို ဖတ်ခြင်း
             info = st.secrets["GCP_SERVICE_ACCOUNT_FILE"]
             
-            # Credential dictionary တည်ဆောက်ခြင်း
+            # 2. Credential Dictionary တည်ဆောက်ခြင်း
             creds_dict = {
                 "type": info["type"],
                 "project_id": info["project_id"],
@@ -100,6 +100,7 @@ if 'sheet_data' in st.session_state:
                 "client_x509_cert_url": info["client_x509_cert_url"]
             }
             
+            # 3. Google Sheets ချိတ်ဆက်ခြင်း
             scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
             creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
             client = gspread.authorize(creds)
@@ -107,8 +108,10 @@ if 'sheet_data' in st.session_state:
             ss = client.open("LotteryData")
             sh1 = ss.get_worksheet(0)
             
-            # edited_df ကို row အဖြစ်ပြောင်းပြီး ပို့ခြင်း
-            clean_rows = edited_df.values.tolist()
+            # 4. Data ပို့ခြင်း (edited_df က List ဖြစ်နေရင် values.tolist() သုံးစရာမလိုပါ)
+            # စာသားအလွတ်မဟုတ်တဲ့ Row တွေကိုပဲ စစ်ထုတ်ပြီး ပို့ပါမယ်
+            clean_rows = [row for row in edited_df if any(str(cell).strip() for cell in row)]
+            
             if clean_rows:
                 sh1.append_rows(clean_rows)
                 st.success("✅ Google Sheet ထဲ ရောက်သွားပါပြီဗျ!")
@@ -116,5 +119,4 @@ if 'sheet_data' in st.session_state:
                 st.warning("ပို့စရာ ဒေတာ မရှိပါဘူး။")
 
         except Exception as e:
-            # except သည် try နဲ့ အတိအကျ တစ်တန်းတည်း ဖြစ်ရပါမယ်
             st.error(f"Error တက်နေပါတယ်: {str(e)}")
