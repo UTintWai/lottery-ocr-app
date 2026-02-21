@@ -6,34 +6,30 @@ import gspread
 from oauth2client.service_account import ServiceAccountCredentials
 
 # --- CONFIG ---
-st.set_page_config(page_title="Lottery Pro 2026 Stable", layout="wide")
+st.set_page_config(page_title="Lottery Pro 2026 Ultimate", layout="wide")
 
 @st.cache_resource
 def load_ocr():
-    # CPU သုံးသူများအတွက် အမြန်ဆုံး mode ဖြစ်အောင် ချိန်ညှိထားသည်
+    # သုံးလုံးဂဏန်းနှင့် ထိုးကြေးများ အပြည့်အစုံဖတ်နိုင်ရန် model ကို optimize လုပ်ထားသည်
     return easyocr.Reader(['en'], gpu=False)
 
 reader = load_ocr()
 
-# --- SCAN FUNCTION (၈ တိုင် အမြန်ဖတ်ရန်) ---
 def scan_voucher_final(img, active_cols, num_rows):
-    # ၁။ ပုံကို OCR ဖတ်ရ ပိုလွယ်အောင် Grayscale ပြောင်းပြီး Contrast မြှင့်တင်ခြင်း
-    img_resized = cv2.resize(img, (0,0), fx=0.4, fy=0.4) 
-    gray = cv2.cvtColor(img_resized, cv2.COLOR_BGR2GRAY)
-    
-    # ပုံ၏ အရွယ်အစားကို တိတိကျကျ ယူခြင်း
+    # ၁။ ပုံကို OCR ဖတ်ရလွယ်အောင် Contrast မြှင့်တင်ခြင်း
+    gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+    # ၈ တိုင်လုံး အပြည့်ပေါ်ရန် ပုံအရွယ်အစားကို အရမ်းမချုံ့တော့ဘဲ ပုံမှန်အတိုင်းထားပါမည်
     h, w = gray.shape
 
-    # ၂။ OCR ဖတ်ခြင်း (paragraph=True ထည့်လိုက်ပါက စာကြောင်းလိုက်ဖတ်သဖြင့် ပိုမြန်စေပါသည်)
+    # ၂။ OCR ဖတ်ခြင်း (paragraph=True က စာလုံးများကို အပြည့်အစုံဖတ်ရန် ကူညီပေးသည်)
     results = reader.readtext(gray, allowlist='0123456789R.*xX', detail=1, paragraph=False) 
     
-    # ၃။ Grid (ဇယားကွက်) တည်ဆောက်ခြင်း
     grid_data = [["" for _ in range(active_cols)] for _ in range(num_rows)]
     col_edges = np.linspace(0, w, active_cols + 1)
     row_edges = np.linspace(0, h, num_rows + 1)
 
-    # ၄။ ရလာသော စာသားများကို သက်ဆိုင်ရာ ဇယားကွက်ထဲ ထည့်ခြင်း
     for (bbox, text, prob) in results:
+        # စာလုံး၏ ဗဟိုအမှတ်ကို ရှာဖွေခြင်း
         cx = np.mean([p[0] for p in bbox])
         cy = np.mean([p[1] for p in bbox])
         
@@ -41,11 +37,12 @@ def scan_voucher_final(img, active_cols, num_rows):
         r = np.searchsorted(row_edges, cy) - 1
         
         if 0 <= r < num_rows and 0 <= c < active_cols:
-            t = text.upper().replace('X', '*')
-            # စာသားအဟောင်းရှိနေလျှင် တွဲပေးရန်
+            # စာလုံးများ အပြည့်အစုံပေါ်စေရန် Clean လုပ်ခြင်း
+            t = text.upper().replace('X', '*').strip()
             if grid_data[r][c] == "":
                 grid_data[r][c] = t
             else:
+                # ဂဏန်းနှစ်ခု ပူးနေပါက ခွဲပေးရန်
                 grid_data[r][c] += f" {t}"
             
     return grid_data
@@ -55,8 +52,9 @@ st.title("🎯 Lottery Pro 2026")
 
 with st.sidebar:
     st.header("⚙️ Settings")
-    a_cols = st.selectbox("အတိုင်အရေအတွက်", [2, 4, 6, 8], index=3) # Default 8 cols
-    n_rows = st.number_input("အတန်းအရေအတွက်", min_value=1, value=30)
+    a_cols = st.selectbox("အတိုင်အရေအတွက်", [2, 4, 6, 8], index=3) # ၈ တိုင်ကို default ထားသည်
+    n_rows = st.number_input("အတန်းအရေအတွက်", min_value=1, value=35)
+    sheet_name = st.text_input("Sheet နာမည်", value="Sheet1") # Sheet2, Sheet3 သို့ ပို့လိုပါက ပြောင်းရန်
 
 uploaded_file = st.file_uploader("Voucher ပုံတင်ပါ", type=["jpg","png","jpeg"])
 
@@ -66,19 +64,18 @@ if uploaded_file:
     st.image(img, use_container_width=True)
 
     if st.button("🔍 Scan စတင်မည်"):
-        with st.spinner("၈ တိုင်လုံး ဖတ်နေပါသည်... စက္ကန့်အနည်းငယ် စောင့်ပေးပါ"):
+        with st.spinner("၈ တိုင်လုံး ဖတ်နေပါသည်... စက္ကန့် ၃၀ ခန့် စောင့်ပေးပါ"):
             data = scan_voucher_final(img, a_cols, n_rows)
             st.session_state['sheet_data'] = data
 
 # --- EDIT & SEND TO SHEET ---
 if 'sheet_data' in st.session_state:
-    st.subheader("📝 Scan ရလဒ် (ပြင်ဆင်နိုင်သည်)")
+    st.subheader("📝 Edit Data (Sheet ထဲ မပို့မီ လိုအပ်သည်များ ပြင်ပါ)")
     edited_data = st.data_editor(st.session_state['sheet_data'], use_container_width=True)
                     
     if st.button("🚀 Send to Google Sheet"):
         try:
             info = st.secrets["GCP_SERVICE_ACCOUNT_FILE"]
-            
             creds_dict = {
                 "type": info["type"],
                 "project_id": info["project_id"],
@@ -96,13 +93,18 @@ if 'sheet_data' in st.session_state:
             creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
             client = gspread.authorize(creds)
             
+            # ဒေတာပို့မည့် Sheet ကို ရွေးချယ်ခြင်း
             ss = client.open("LotteryData")
-            sh1 = ss.get_worksheet(0)
+            try:
+                sh = ss.worksheet(sheet_name)
+            except:
+                st.error(f"'{sheet_name}' ဆိုသည့် Worksheet ကို မတွေ့ပါ။ နာမည်မှန်မမှန် စစ်ပေးပါ။")
+                st.stop()
             
             clean_rows = [row for row in edited_data if any(str(cell).strip() for cell in row)]
             if clean_rows:
-                sh1.append_rows(clean_rows)
-                st.success("✅ Google Sheet ထဲသို့ ပို့ဆောင်ပြီးပါပြီ!")
+                sh.append_rows(clean_rows)
+                st.success(f"✅ ဒေတာများကို {sheet_name} ထဲသို့ ပို့ပြီးပါပြီ!")
             else:
                 st.warning("ပို့ရန် ဒေတာ မရှိပါ။")
 
