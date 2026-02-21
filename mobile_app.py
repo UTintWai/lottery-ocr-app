@@ -2,7 +2,6 @@ import streamlit as st
 import numpy as np
 import easyocr
 import cv2
-import re
 import gspread
 from oauth2client.service_account import ServiceAccountCredentials
 
@@ -11,38 +10,47 @@ st.set_page_config(page_title="Lottery Pro 2026 Stable", layout="wide")
 
 @st.cache_resource
 def load_ocr():
-    # CPU အခြေအနေတွင် မြန်ဆန်စေရန် Setting များ ညှိထားပါသည်
+    # EasyOCR ကို CPU တွင် မြန်ဆန်အောင် ဆက်တင်ညှိထားခြင်း
     return easyocr.Reader(['en'], gpu=False)
 
 reader = load_ocr()
 
-# --- SCAN FUNCTION (၈ တိုင်လုံး ဖတ်နိုင်ရန် ပြင်ထားသည်) ---
+# --- SCAN FUNCTION (၈ တိုင်လုံး တိကျစွာဖတ်ရန်) ---
 def scan_voucher_final(img, active_cols, num_rows):
-    # ၁။ ပုံကို ၅၀% ချုံ့လိုက်ခြင်းဖြင့် OCR ဖတ်နှုန်း မြန်စေပါသည်
+    # ၁။ ပုံကို ၅၀% ချုံ့ခြင်းဖြင့် OCR မြန်နှုန်းကို တိုးမြှင့်သည်
     img_resized = cv2.resize(img, (0,0), fx=0.5, fy=0.5) 
     gray = cv2.cvtColor(img_resized, cv2.COLOR_BGR2GRAY)
-    h, w = gray.shape # image_15a4df.png ထဲက NameError ကို ဖြေရှင်းရန်
+    
+    # ပုံ၏ အမြင့်နှင့် အနံကို အတိအကျရယူခြင်း
+    h, w = gray.shape
 
-    # ၂။ OCR ဖတ်ခြင်း (detail=1 ထားမှ တည်နေရာ သိနိုင်ပါသည်)
+    # ၂။ OCR ဖတ်ခြင်း (စာသားနှင့် တည်နေရာကို ယူသည်)
     results = reader.readtext(gray, allowlist='0123456789R.*xX', detail=1) 
     
-    # ၃။ Grid data တည်ဆောက်ခြင်း
+    # ၃။ Grid (ဇယားကွက်) တည်ဆောက်ခြင်း
+    # ပုံ၏ အနံ (w) ကို အတိုင်အရေအတွက်အလိုက် အညီအမျှ ခွဲဝေသည်
     grid_data = [["" for _ in range(active_cols)] for _ in range(num_rows)]
     col_edges = np.linspace(0, w, active_cols + 1)
     row_edges = np.linspace(0, h, num_rows + 1)
 
-    # ၄။ ရလာသော စာသားများကို Grid ထဲသို့ ထည့်ခြင်း
+    # ၄။ ရလာသော စာသားများကို သက်ဆိုင်ရာ အတိုင်/အတန်းထဲ ထည့်ခြင်း
     for (bbox, text, prob) in results:
+        # စာလုံး၏ ဗဟိုအမှတ်ကို ရှာဖွေခြင်း
         cx = np.mean([p[0] for p in bbox])
         cy = np.mean([p[1] for p in bbox])
         
+        # မည်သည့် အတိုင် (Column) နှင့် အတန်း (Row) ထဲကျသလဲ တွက်ချက်ခြင်း
         c = np.searchsorted(col_edges, cx) - 1
         r = np.searchsorted(row_edges, cy) - 1
         
-        # Grid ဘောင်အတွင်းရှိသော စာသားများကိုသာ ယူပါသည်
+        # Grid ဘောင်အတွင်းရှိပါက ဇယားထဲ ထည့်သွင်းသည်
         if 0 <= r < num_rows and 0 <= c < active_cols:
             t = text.upper().replace('X', '*')
-            grid_data[r][c] = t
+            # အကယ်၍ အကွက်ထဲမှာ စာရှိနှင့်ပြီးသားဖြစ်ပါက ကော်မာ (,) ဖြင့် တွဲပေးမည်
+            if grid_data[r][c] == "":
+                grid_data[r][c] = t
+            else:
+                grid_data[r][c] += f", {t}"
             
     return grid_data
 
@@ -51,8 +59,9 @@ st.title("🎯 Lottery Pro 2026")
 
 with st.sidebar:
     st.header("⚙️ Settings")
+    # အတိုင်အရေအတွက်ကို ၈ တိုင်အထိ ရွေးနိုင်သည်
     a_cols = st.selectbox("အတိုင်အရေအတွက်", [2, 4, 6, 8], index=2)
-    n_rows = st.number_input("အတန်းအရေအတွက်", min_value=1, value=25)
+    n_rows = st.number_input("အတန်းအရေအတွက်", min_value=1, value=30)
 
 uploaded_file = st.file_uploader("Voucher ပုံတင်ပါ", type=["jpg","png","jpeg"])
 
@@ -62,20 +71,19 @@ if uploaded_file:
     st.image(img, use_container_width=True)
 
     if st.button("🔍 Scan စတင်မည်"):
-        with st.spinner("ဖတ်နေပါသည် (၁ မိနစ်ခန့် ကြာနိုင်ပါသည်)..."):
+        with st.spinner("ဖတ်နေပါသည်... အတိုင်များလေ ပိုကြာလေဖြစ်ပါသည်"):
             data = scan_voucher_final(img, a_cols, n_rows)
             st.session_state['sheet_data'] = data
 
 # --- EDIT & SEND TO SHEET ---
 if 'sheet_data' in st.session_state:
-    st.subheader("📝 Edit Data")
-    # အရင်ထွက်လာသော data ကို ပြင်ဆင်ရန်
+    st.subheader("📝 Edit Data (မပို့မီ လိုအပ်သည်များ ပြင်ဆင်ပါ)")
     edited_data = st.data_editor(st.session_state['sheet_data'], use_container_width=True)
                     
     if st.button("🚀 Send to Google Sheet"):
         try:
-            # ၁။ Secrets ဖတ်ခြင်း
-            info = st.secrets["GCP_SERVICE_ACCOUNT_FILE"] 
+            # Secrets ဖတ်ခြင်း (အမည်ကို Dashboard တွင် အတိအကျတူအောင် ပေးထားပါ)
+            info = st.secrets["GCP_SERVICE_ACCOUNT_FILE"]
             
             creds_dict = {
                 "type": info["type"],
@@ -94,18 +102,17 @@ if 'sheet_data' in st.session_state:
             creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
             client = gspread.authorize(creds)
             
-            # ၂။ Sheet ဖွင့်ခြင်း
             ss = client.open("LotteryData")
             sh1 = ss.get_worksheet(0)
             
-            # ၃။ အလွတ်မဟုတ်သော ဒေတာများကိုသာ ပို့ခြင်း
+            # စာသားရှိသော Row များကိုသာ စစ်ထုတ်ပို့ဆောင်ခြင်း
             clean_rows = [row for row in edited_data if any(str(cell).strip() for cell in row)]
             
             if clean_rows:
                 sh1.append_rows(clean_rows)
-                st.success("✅ Google Sheet ထဲ ရောက်သွားပါပြီဗျ!")
+                st.success("✅ ဒေတာများကို Google Sheet ထဲသို့ ပို့ပြီးပါပြီ!")
             else:
-                st.warning("ပို့စရာ ဒေတာ မရှိပါဘူး။")
+                st.warning("ပို့ရန် ဒေတာ မရှိပါ။")
 
         except Exception as e:
-            st.error(f"Error: {str(e)}")
+            st.error(f"Error တက်နေပါသည်: {str(e)}")
