@@ -30,7 +30,7 @@ def process_grid(img, n_rows, n_cols):
         
         if 0 <= r_idx < n_rows and 0 <= c_idx < n_cols:
             val = text.strip()
-            # Ditto Logic (။)
+            # Ditto Logic (။) အမှတ်အသားများ
             if any(m in val for m in ['"', '။', '=', '||', '..', '`', '4', 'u', 'U']):
                 grid[r_idx][c_idx] = "DITTO"
             else:
@@ -46,13 +46,13 @@ def process_grid(img, n_rows, n_cols):
     return grid
 
 # --- UI ---
-st.title("🎯 Lottery Pro (Google Sheets Connection Fix)")
+st.title("🎯 Lottery Pro (Google Sheets Fix)")
 
 with st.sidebar:
     st.header("⚙️ Settings")
     a_cols = st.selectbox("အတိုင်အရေအတွက်", [2, 4, 6, 8], index=3)
     n_rows = st.number_input("အတန်းအရေအတွက်", min_value=1, value=25)
-    target_sheet = st.radio("ပို့မည့် Sheet", ["Sheet1", "Sheet2", "Sheet3"])
+    target_sheet_name = st.radio("ပို့မည့် Sheet", ["Sheet1", "Sheet2", "Sheet3"])
 
 uploaded_file = st.file_uploader("လက်ရေး Voucher ပုံတင်ပါ", type=["jpg","png","jpeg"])
 
@@ -71,39 +71,34 @@ if 'processed_data' in st.session_state:
     
     if st.button("🚀 Send to Google Sheets"):
         try:
-            # ၁။ Secrets ထဲတွင် JSON ရှိမရှိ စစ်ဆေးခြင်း
+            # ၁။ Secrets စစ်ဆေးခြင်း
             if "GCP_SERVICE_ACCOUNT_FILE" not in st.secrets:
-                st.error("Error: Streamlit Secrets ထဲမှာ 'GCP_SERVICE_ACCOUNT_FILE' ကို မတွေ့ပါ။")
-                st.info("အကြံပြုချက်: Streamlit App Settings > Secrets ထဲမှာ JSON key ကို ထည့်သွင်းပေးပါ။")
+                st.error("Error: 'GCP_SERVICE_ACCOUNT_FILE' ကို Secrets ထဲမှာ မတွေ့ပါ။")
                 st.stop()
             
-            # ၂။ Credentials ပြင်ဆင်ခြင်း
+            # ၂။ Connection အဆင့်
             scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
             info = st.secrets["GCP_SERVICE_ACCOUNT_FILE"]
             creds = ServiceAccountCredentials.from_json_keyfile_dict(info, scope)
             client = gspread.authorize(creds)
             
-            # ၃။ Sheet ဖွင့်ခြင်း (နာမည်ကို 'LotteryData' ဟု ပုံသေသတ်မှတ်ထားသည်)
-            try:
-                ss = client.open("LotteryData")
-            except gspread.exceptions.SpreadsheetNotFound:
-                st.error("Error: 'LotteryData' အမည်ရှိသော Google Sheet ကို မတွေ့ပါ။")
-                st.info("အကြံပြုချက်: Google Sheet အမည်ကို 'LotteryData' ဟု ပေးထားပြီး Service Account Email ကို Share (Editor) လုပ်ထားပါ။")
-                st.stop()
-
-            sh = ss.worksheet(target_sheet)
+            # ၃။ Sheet ဖွင့်ခြင်း (နာမည်ကို သေချာစစ်ပါ)
+            ss = client.open("LotteryData")
+            sh = ss.worksheet(target_sheet_name)
             
-            # ၄။ ဒေတာများကို formatting လုပ်ပြီး ပို့ခြင်း
+            # ၄။ ဒေတာပြင်ဆင်ခြင်း (ရှေ့က 0 မပျောက်ရန် ' ခံခြင်း)
             formatted_data = [[f"'{cell}" if str(cell).strip() != "" else "" for cell in row] for row in edited_data]
-            
-            # အကွက်လွတ် Row များကို ဖယ်ထုတ်မည်
             clean_rows = [r for r in formatted_data if any(c != "" for c in r)]
             
             if clean_rows:
                 sh.append_rows(clean_rows, value_input_option='USER_ENTERED')
-                st.success(f"✅ {len(clean_rows)} တန်းကို {target_sheet} ထဲသို့ ပို့ပြီးပါပြီ!")
+                st.success(f"✅ {len(clean_rows)} တန်းကို {target_sheet_name} ထဲသို့ အောင်မြင်စွာ ပို့ပြီးပါပြီ!")
             else:
-                st.warning("ပို့ရန် ဒေတာ မတွေ့ပါ။")
+                st.warning("ပို့ရန် ဒေတာ မရှိပါ။")
 
+        except gspread.exceptions.SpreadsheetNotFound:
+            st.error("Error: 'LotteryData' ဆိုတဲ့ Google Sheet ကို မတွေ့ပါ။ Sheet နာမည် မှန်အောင် ပြင်ပေးပါဗျ။")
+        except gspread.exceptions.WorksheetNotFound:
+            st.error(f"Error: {target_sheet_name} ဆိုတဲ့ Tab ကို မတွေ့ပါ။")
         except Exception as e:
             st.error(f"Error: {str(e)}")
