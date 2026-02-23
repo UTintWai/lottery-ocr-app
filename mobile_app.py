@@ -17,42 +17,44 @@ reader = load_ocr()
 
 # --- IMAGE PROCESSING FOR 8 COLUMNS ---
 def process_grid_fixed(img, n_rows, n_cols):
-    # ပုံကို Gray ပြောင်းပြီး အစွန်းတွေကို ချဲ့လိုက်ခြင်း (Padding)
     gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
-    # ဘေးဘောင်တွေကို အဖြူသား ၂၀ pixel စီ ချဲ့လိုက်လို့ ဘေးဆုံးက စာတွေ မလွတ်တော့ပါဘူး
-    gray = cv2.copyMakeBorder(gray, 20, 20, 20, 20, cv2.BORDER_CONSTANT, value=[255, 255, 255])
+    # Contrast မြှင့်ပေးရင် OCR ပိုဖတ်နိုင်ပါတယ်
+    gray = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)[1]
     
     h, w = gray.shape
     results = reader.readtext(gray, detail=1)
     grid = [["" for _ in range(n_cols)] for _ in range(n_rows)]
     
-    # ၈ တိုင်အတွက် Column width ကို တိကျစွာ ခွဲဝေခြင်း
+    # Padding ထည့်ထားလို့ coordinate ပြန်တွက်တဲ့အခါ သတိထားရပါမယ်
     col_width = w / n_cols
     row_height = h / n_rows
 
     for (bbox, text, prob) in results:
-        cx = np.mean([p[0] for p in bbox])
-        cy = np.mean([p[1] for p in bbox])
+        # bounding box ရဲ့ ဗဟိုကို တွက်တာထက် ထိပ်ဆုံး point ကို ယူတာ ပိုငြိမ်ပါတယ်
+        cx = (bbox[0][0] + bbox[1][0]) / 2
+        cy = (bbox[0][1] + bbox[3][1]) / 2
         
         c_idx = int(cx / col_width)
         r_idx = int(cy / row_height)
         
         if 0 <= r_idx < n_rows and 0 <= c_idx < n_cols:
             val = text.strip()
-            # Ditto (။) စစ်ဆေးခြင်း
-            if any(m in val for m in ['"', '။', '=', '||', '..', '`', '4', 'u', 'U']):
+            # ဒစ်တို (Ditto) အတွက် regex ကို ပိုစုံအောင် ထည့်ထားပေးတယ်
+            if re.search(r'["။=||.`4uU\-\–\—]', val):
                 grid[r_idx][c_idx] = "DITTO"
             else:
-                # ဂဏန်း ၃ လုံး (0) ဖြည့်ခြင်း
-                clean_num = re.sub(r'[^0-9\*xX]', '', val)
-                if clean_num.isdigit() and len(clean_num) < 3:
-                    clean_num = clean_num.zfill(3)
-                grid[r_idx][c_idx] = clean_num
+                # ဂဏန်းသက်သက်ပဲ ယူမယ်
+                clean_num = "".join(filter(str.isdigit, val))
+                if clean_num:
+                    # ၃ လုံးပြည့်အောင် 0 ဖြည့်တာ (ဥပမာ "5" -> "005")
+                    grid[r_idx][c_idx] = clean_num.zfill(3)
 
-    # Ditto Fill Logic
+    # Ditto Fill Logic (အပေါ်ကအတိုင်း)
     for c in range(n_cols):
         for r in range(1, n_rows):
-            if grid[r][c] == "DITTO":
+            if grid[r][c] == "DITTO" or grid[r][c] == "":
+                # အကွက်လွတ်နေရင်လည်း အပေါ်ကဟာကို ယူခိုင်းကြည့်တာပါ
+                # (မှတ်ချက် - ဗောက်ချာပုံစံပေါ် မူတည်ပြီး ဒါကို ဖြုတ်နိုင်ပါတယ်)
                 grid[r][c] = grid[r-1][c]
     return grid
 
