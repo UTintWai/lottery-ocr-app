@@ -7,7 +7,7 @@ import gspread
 from oauth2client.service_account import ServiceAccountCredentials
 
 # --- CONFIG ---
-st.set_page_config(page_title="Lottery Scanner v12", layout="wide")
+st.set_page_config(page_title="Lottery Scanner v13", layout="wide")
 
 @st.cache_resource
 def load_ocr():
@@ -15,15 +15,14 @@ def load_ocr():
 
 reader = load_ocr()
 
-def process_v12(img, n_cols):
+def process_v13(img, n_cols):
     h, w = img.shape[:2]
-    # RAM Crash မဖြစ်စေရန်နှင့် တိကျစေရန် 1400px ထားပါမယ်
-    target_w = 1400
+    target_w = 1500
     img_resized = cv2.resize(img, (target_w, int(h * (target_w / w))))
     gray = cv2.cvtColor(img_resized, cv2.COLOR_BGR2GRAY)
     
-    # OCR results: mag_ratio မြှင့်ထားခြင်းဖြင့် စာလုံးသေးလေးတွေကို ပိုဖတ်နိုင်စေပါတယ်
-    results = reader.readtext(gray, paragraph=False, mag_ratio=1.2, link_threshold=0.2)
+    # OCR: link_threshold ကို 0.1 အထိ လျှော့ချပြီး ဂဏန်းတွဲတွေကို အတင်းပေါင်းခိုင်းမယ်
+    results = reader.readtext(gray, paragraph=False, link_threshold=0.1, mag_ratio=1.5)
     
     raw_data = []
     for (bbox, text, prob) in results:
@@ -33,56 +32,53 @@ def process_v12(img, n_cols):
 
     if not raw_data: return []
 
-    # --- ROW CLUSTERING ---
+    # --- 1. ROW CLUSTERING (အတန်းခွဲခြင်း) ---
     raw_data.sort(key=lambda k: k['y'])
     rows_list = []
     y_threshold = 28 
     
-    current_row = [raw_data[0]]
-    for i in range(1, len(raw_data)):
-        if raw_data[i]['y'] - current_row[-1]['y'] < y_threshold:
-            current_row.append(raw_data[i])
-        else:
-            rows_list.append(current_row)
-            current_row = [raw_data[i]]
-    rows_list.append(current_row)
+    if raw_data:
+        current_row = [raw_data[0]]
+        for i in range(1, len(raw_data)):
+            if raw_data[i]['y'] - current_row[-1]['y'] < y_threshold:
+                current_row.append(raw_data[i])
+            else:
+                rows_list.append(current_row)
+                current_row = [raw_data[i]]
+        rows_list.append(current_row)
 
-    # --- GRID CALCULATION ---
+    # --- 2. DYNAMIC GRID ASSIGNMENT ---
     final_grid = []
-    col_width = target_w / n_cols
+    col_edges = np.linspace(0, target_w, n_cols + 1)
 
     for row_items in rows_list:
         row_cells = ["" for _ in range(n_cols)]
         
-        # အကွက်တစ်ခုတည်းမှာရှိတဲ့ ဂဏန်းအပိုင်းအစတွေကို ပေါင်းဖို့ temp list
-        temp_bins = [[] for _ in range(n_cols)]
+        # Column တစ်ခုတည်းမှာရှိတဲ့ အပိုင်းအစတွေကို ပေါင်းရန်
         for item in row_items:
-            c_idx = int(item['x'] // col_width)
+            # ဘယ် Column ထဲ ရောက်သလဲ စစ်ဆေးခြင်း
+            c_idx = np.searchsorted(col_edges, item['x']) - 1
             if 0 <= c_idx < n_cols:
-                temp_bins[c_idx].append(item)
-        
-        for c in range(n_cols):
-            temp_bins[c].sort(key=lambda k: k['x'])
-            # တစ်အိမ်တည်းက စာလုံးတွေကို ဆက်လိုက်ခြင်း
-            combined_txt = "".join([i['text'] for i in temp_bins[c]])
-            
-            # Ditto Detection
-            is_ditto = any(m in combined_txt for m in ['"', '။', '=', '||', 'LL', '`', 'V', '4', 'U', 'Y', '1']) and len(combined_txt) <= 2
-            
-            if is_ditto:
-                row_cells[c] = "DITTO"
-            else:
-                num = re.sub(r'[^0-9]', '', combined_txt)
-                if num:
-                    if c % 2 == 0: # ၃ လုံးဂဏန်း (Column 0, 2, 4, 6)
-                        row_cells[c] = num.zfill(3) if len(num) <= 3 else num[:3]
-                    else: # ထိုးကြေး (Column 1, 3, 5, 7)
-                        row_cells[c] = num
+                txt = item['text']
+                # Ditto Check
+                is_ditto = any(m in txt for m in ['"', '။', '=', '||', 'LL', '`', 'V', '4', 'U', 'Y', '1']) and len(txt) <= 2
+                
+                if is_ditto:
+                    row_cells[c_idx] = "DITTO"
+                else:
+                    num = re.sub(r'[^0-9]', '', txt)
+                    if num:
+                        if c_idx % 2 == 0: # ဂဏန်းတိုင် (၃ လုံး)
+                            # ရှေ့က 0 ဖြည့်မယ် (003 ဖြစ်အောင်)
+                            row_cells[c_idx] = num.zfill(3) if len(num) <= 3 else num[:3]
+                        else: # ထိုးကြေးတိုင်
+                            # အရင်ရှိပြီးသား ဂဏန်းနဲ့ ဆက်လိုက်မယ် (6 နဲ့ 0 တွေ့ရင် 60 ဖြစ်အောင်)
+                            row_cells[c_idx] += num
         final_grid.append(row_cells)
 
-    # --- 💡 SMART FILL LOGIC (။ မပါရင်တောင် ဖြည့်မည့်စနစ်) ---
+    # --- 3. SMART AUTO-FILL (Ditto & Empty Amount) ---
     for c in range(n_cols):
-        if c % 2 != 0: # ထိုးကြေးတိုင်အတွက်သာ
+        if c % 2 != 0: # ထိုးကြေးတိုင်များအတွက်သာ
             last_amt = ""
             for r in range(len(final_grid)):
                 val = final_grid[r][c].strip()
@@ -91,16 +87,15 @@ def process_v12(img, n_cols):
                     if last_amt != "":
                         final_grid[r][c] = last_amt
                 else:
-                    # တကယ်လို့ ဂဏန်းအသစ် (ဥပမာ 60) တွေ့ရင် အဲ့ဒါကိုပဲ ယူပြီး မှတ်ထားမယ်
+                    # ဂဏန်းအသစ်တွေ့ရင် အဲ့ဒါကိုပဲယူပြီး နောက်အကွက်အတွက် မှတ်ထားမယ်
                     last_amt = val
-        else: # ၃ လုံးဂဏန်းတိုင်
+        else: # ဂဏန်းတိုင်များအတွက်
             for r in range(len(final_grid)):
-                # ဂဏန်းတိုင်မှာ Ditto တွေ့ရင် အပေါ်ကမကူးဘဲ ဖျက်လိုက်မယ်
                 if final_grid[r][c] == "DITTO": final_grid[r][c] = ""
                 
     return final_grid
 
-# (save_to_sheets UI အပိုင်းက အရင်အတိုင်းပဲမို့ ချန်လှပ်ထားပါမယ်...)
+# (Google Sheets function များ အရင်အတိုင်းပဲမို့ ချန်လှပ်ထားပါမည်)
 
 # --- UI ---
 st.title("🔢 Lottery Scanner v11 (RAM Safe)")
