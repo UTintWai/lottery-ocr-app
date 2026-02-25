@@ -74,14 +74,14 @@ def process_v10(img, n_cols):
     # --- UPDATED FILL-DOWN LOGIC (ထိုးကြေးအတွက်သာ) ---
     for c in range(n_cols):
         if c % 2 != 0: # ထိုးကြေးတိုင်
-            for r in range(1, len(final_grid)):
+            last_amount = ""
+            for r in range(len(final_grid)):
                 # အကယ်၍ DITTO လို့ AI က သေချာဖတ်မိမှသာ အပေါ်ကဂဏန်းကို ကူးမည်
                 # အကွက်လွတ်နေရင် မကူးတော့ဘဲ ဗောက်ချာအတိုင်း ထားမည်
                 if final_grid[r][c] == "DITTO":
-                    final_grid[r][c] = final_grid[r-1][c]
-                elif final_grid[r][c] == "":
-                    # ဗောက်ချာမှာ အကွက်လွတ်ရင် အလွတ်ပဲထားပါမယ် (သို့မဟုတ် လိုအပ်လျှင် "0" ထားနိုင်သည်)
-                    final_grid[r][c] = ""
+                    final_grid[r][c] = last_amount
+                elif final_grid[r][c] != "":
+                    last_amount = final_grid[r][c] # ဂဏန်းအသစ်ရှိလျှင် သိမ်းထားမည်
         else: # ဂဏန်းတိုင်
             for r in range(len(final_grid)):
                 if final_grid[r][c] == "DITTO": final_grid[r][c] = ""
