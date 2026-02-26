@@ -7,7 +7,7 @@ import gspread
 from oauth2client.service_account import ServiceAccountCredentials
 
 # --- CONFIG ---
-st.set_page_config(page_title="Lottery Scanner v14", layout="wide")
+st.set_page_config(page_title="Lottery Scanner v15", layout="wide")
 
 @st.cache_resource
 def load_ocr():
@@ -15,7 +15,7 @@ def load_ocr():
 
 reader = load_ocr()
 
-def process_v14(img, n_cols):
+def process_v15(img, n_cols):
     h, w = img.shape[:2]
     target_w = 1600
     img_resized = cv2.resize(img, (target_w, int(h * (target_w / w))))
@@ -96,7 +96,7 @@ def process_v14(img, n_cols):
                 
     return final_grid
 
-def save_to_sheets_v14(data):
+def save_to_sheets_v15(data):
     try:
         scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
         creds_dict = st.secrets["gcp_service_account"]
@@ -113,11 +113,11 @@ def save_to_sheets_v14(data):
         return False
 
 # --- UI ---
-st.title("🔢 Lottery Precision Scanner v14")
+st.title("🔢 Lottery Precision Scanner v15")
 
 with st.sidebar:
     a_cols = st.selectbox("တိုင်အရေအတွက်", [6, 8], index=1)
-    st.info("V14: ထိုးကြေးဂဏန်းများ အပြည့်အစုံရစေရန်နှင့် Ditto logic ကို အဆင့်မြှင့်တင်ထားပါသည်။")
+    st.info("V15: ထိုးကြေးဂဏန်းများ အပြည့်အစုံရစေရန်နှင့် Ditto logic ကို အဆင့်မြှင့်တင်ထားပါသည်။")
 
 up_file = st.file_uploader("ဗောက်ချာပုံတင်ပါ", type=['jpg', 'jpeg', 'png'])
 
@@ -128,11 +128,11 @@ if up_file:
     
     if st.button("🔍 ဒေတာထုတ်ယူမည်"):
         with st.spinner("AI ဖြင့် အသေးစိတ် စစ်ဆေးနေပါသည်..."):
-            res = process_v14(img, a_cols)
-            st.session_state['data_v14'] = res
+            res = process_v15(img, a_cols)
+            st.session_state['data_v15'] = res
 
-if 'data_v14' in st.session_state:
-    edited = st.data_editor(st.session_state['data_v14'], use_container_width=True)
+if 'data_v15' in st.session_state:
+    edited = st.data_editor(st.session_state['data_v15'], use_container_width=True)
     if st.button("💾 Google Sheet သို့ ပို့မည်"):
-        if save_to_sheets_v14(edited):
+        if save_to_sheets_v15(edited):
             st.success("အောင်မြင်စွာ သိမ်းဆည်းပြီးပါပြီ!")
