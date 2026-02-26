@@ -7,7 +7,7 @@ import gspread
 from oauth2client.service_account import ServiceAccountCredentials
 
 # --- CONFIG ---
-st.set_page_config(page_title="Lottery Scanner v19", layout="wide")
+st.set_page_config(page_title="Lottery Scanner v20", layout="wide")
 
 @st.cache_resource
 def load_ocr():
@@ -15,22 +15,24 @@ def load_ocr():
 
 reader = load_ocr()
 
-st.title("🔢 Lottery Pro Scanner (v19 - 8 Col Fix)")
+st.title("🔢 Multi-Column Lottery Scanner (v20)")
 
 with st.sidebar:
-    a_cols = st.selectbox("တိုင်အရေအတွက် ရွေးပါ", [6, 8], index=1)
-    st.info("V19: ၈ တိုင်ဗောက်ချာအတွက် တိုင်အကျယ်များကို အချိုးကျ ပြန်လည်ညှိထားပါသည်။")
+    # အသုံးပြုသူ ရိုက်ထားသော တိုင်အရေအတွက်ကို ရွေးရန်
+    a_cols = st.selectbox("ဗောက်ချာပါ တိုင်အရေအတွက်", [2, 4, 6, 8], index=3)
+    st.info(f"ယခု {a_cols} တိုင်ဗောက်ချာအတွက် Logic ကို အသုံးပြုနေပါသည်။")
 
-up_file = st.file_uploader("ဗောက်ချာပုံ ရွေးရန်", type=['jpg', 'jpeg', 'png'])
+up_file = st.file_uploader("ဗောက်ချာပုံ ရွေးပါ", type=['jpg', 'jpeg', 'png'])
 
-def process_v19(img, n_cols):
+def process_v20(img, n_cols):
     h, w = img.shape[:2]
-    target_w = 1600
+    # Resolution ကို ပိုကောင်းအောင် 1800px ထားပါမယ်
+    target_w = 1800
     img_resized = cv2.resize(img, (target_w, int(h * (target_w / w))))
     gray = cv2.cvtColor(img_resized, cv2.COLOR_BGR2GRAY)
     
-    # OCR results
-    results = reader.readtext(gray, paragraph=False, link_threshold=0.1, mag_ratio=1.6)
+    # OCR results: ၈ တိုင်အတွက် link_threshold ကို အထူးလျှော့ထားသည်
+    results = reader.readtext(gray, paragraph=False, link_threshold=0.05, mag_ratio=1.6)
     
     raw_data = []
     for (bbox, text, prob) in results:
@@ -44,7 +46,6 @@ def process_v19(img, n_cols):
     raw_data.sort(key=lambda k: k['y'])
     rows_list = []
     y_threshold = 30 
-    
     current_row = [raw_data[0]]
     for i in range(1, len(raw_data)):
         if raw_data[i]['y'] - current_row[-1]['y'] < y_threshold:
@@ -54,15 +55,9 @@ def process_v19(img, n_cols):
             current_row = [raw_data[i]]
     rows_list.append(current_row)
 
-    # --- 8-COLUMN RATIO TUNING ---
-    # ၈ တိုင်အတွက် တိုင်တစ်ခုစီရဲ့ width အချိုးအစားကို ချိန်ညှိခြင်း
-    if n_cols == 8:
-        # ဂဏန်းတိုင် နဲ့ ထိုးကြေးတိုင် အချိုးအစား (ဥပမာ- 45%, 55%)
-        # ပိုမိုတိကျစေရန် ညီတူညီမျှ ခွဲမည့်အစား အချိုးကျ ခွဲဝေပါမည်
-        col_edges = [0, 0.12, 0.25, 0.37, 0.50, 0.62, 0.75, 0.87, 1.0]
-        col_edges = [x * target_w for x in col_edges]
-    else:
-        col_edges = np.linspace(0, target_w, n_cols + 1)
+    # DYNAMIC GRID CALCULATION
+    # တိုင်များ များလာလျှင် boundary များကို ပိုမိုစိပ်အောင် တွက်ချက်ခြင်း
+    col_edges = np.linspace(0, target_w, n_cols + 1)
 
     final_grid = []
     for row_items in rows_list:
@@ -79,8 +74,8 @@ def process_v19(img, n_cols):
             bins[c].sort(key=lambda k: k['x'])
             combined_txt = "".join([i['text'] for i in bins[c]])
             
-            # Ditto Logic
-            is_ditto = any(m in combined_txt for m in ['"', '။', '=', '||', 'LL', '`', 'V', '4', 'U', 'Y', '1', '7', 'I']) and len(combined_txt) <= 2
+            # Ditto Logic (။ သင်္ကေတနှင့် တူသည်များကို အားလုံးဖမ်းမည်)
+            is_ditto = any(m in combined_txt for m in ['"', '။', '=', '||', 'LL', '`', 'V', '4', 'U', 'Y', '1', '7', 'I', '/', '(', ')']) and len(combined_txt) <= 2
             
             if is_ditto:
                 row_cells[c] = "DITTO"
@@ -93,9 +88,9 @@ def process_v19(img, n_cols):
                         row_cells[c] = num
         final_grid.append(row_cells)
 
-    # SMART FILL-DOWN
+    # AUTO-FILL LOGIC
     for c in range(n_cols):
-        if c % 2 != 0: 
+        if c % 2 != 0: # ထိုးကြေးတိုင်အတွက်သာ
             last_amt = ""
             for r in range(len(final_grid)):
                 val = final_grid[r][c].strip()
@@ -110,19 +105,18 @@ def process_v19(img, n_cols):
                 
     return final_grid
 
-# (Save function and Main UI same as before)
+# --- UI LOGIC ---
 if up_file:
     file_bytes = np.frombuffer(up_file.read(), np.uint8)
     img = cv2.imdecode(file_bytes, 1)
-    st.image(img, width=550)
+    st.image(img, width=600)
     
-    if st.button("🔍 ဒေတာထုတ်ယူမည် (၈ တိုင်)"):
-        with st.spinner("အသေးစိတ်စစ်ဆေးနေပါသည်..."):
-            res = process_v19(img, a_cols)
-            st.session_state['data_v19'] = res
+    if st.button(f"🔍 {a_cols} တိုင် Scan လုပ်မည်"):
+        with st.spinner("AI စနစ်ဖြင့် အကွက်များကို ခွဲခြားနေပါသည်..."):
+            res = process_v20(img, a_cols)
+            st.session_state['data_v20'] = res
 
-if 'data_v19' in st.session_state:
-    edited = st.data_editor(st.session_state['data_v19'], use_container_width=True)
-    if st.button("💾 Google Sheet သိမ်းမည်"):
-        # save_to_sheets code...
-        st.success("သိမ်းဆည်းပြီးပါပြီ!")
+if 'data_v20' in st.session_state:
+    st.success("ဖတ်ခြင်း ပြီးဆုံးပါပြီ။ အောက်ပါဇယားတွင် တိုက်ဆိုင်စစ်ဆေးပါ။")
+    edited = st.data_editor(st.session_state['data_v20'], use_container_width=True)
+    # Google Sheet save logic...
