@@ -5,17 +5,16 @@ import easyocr
 import re
 import gc
 import gspread
+import time
 from oauth2client.service_account import ServiceAccountCredentials
 
-# --- BASIC CONFIG ---
-st.set_page_config(page_title="Lottery Scanner v31", layout="wide")
+st.set_page_config(page_title="Lottery Scanner v32", layout="wide")
 
 @st.cache_resource
 def load_ocr():
-    # RAM ချွေတာရန် GPU ပိတ်ထားပြီး အပေါ့ပါးဆုံး Model သုံးမည်
     return easyocr.Reader(['en'], gpu=False)
 
-def save_to_sheets_v31(data):
+def save_to_sheets_v32(data):
     try:
         scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
         creds_dict = st.secrets["gcp_service_account"]
@@ -23,64 +22,60 @@ def save_to_sheets_v31(data):
         client = gspread.authorize(creds)
         sheet = client.open("LotteryData").get_worksheet(0)
         
-        # '0' ရှေ့ကမပျောက်စေရန် Formatting လုပ်ခြင်း
-        formatted = [[f"'{str(c)}" if str(c).strip() != "" else "" for c in row] for row in data]
-        if formatted:
-            sheet.append_rows(formatted)
-            return True
+        # --- STABLE SAVING LOGIC ---
+        # Connection မပြတ်အောင် တစ်ကြောင်းချင်းစီ ပို့မည်
+        progress_text = st.empty()
+        count = 0
+        for row in data:
+            formatted_row = [f"'{str(c)}" if str(c).strip() != "" else "" for c in row]
+            if any(formatted_row): # အလွတ်မဟုတ်မှ ပို့မည်
+                sheet.append_row(formatted_row)
+                count += 1
+                progress_text.text(f"သိမ်းဆည်းနေဆဲ... ({count}/{len(data)} ကြောင်း)")
+                time.sleep(0.1) # Google API limit မထိအောင် ခဏနားသည်
+        return True
     except Exception as e:
-        st.error(f"Sheet Error: {str(e)}")
+        st.error(f"Sheet ထဲ ဒေတာမဝင်ရသည့်အကြောင်းရင်း: {str(e)}")
         return False
 
-st.title("🔢 Mobile 8-Column Scanner v31")
+st.title("🔢 Data Saving Pro v32")
 
 with st.sidebar:
     a_cols = st.selectbox("တိုင်အရေအတွက်", [2, 4, 6, 8], index=3)
-    st.info("V31: ၈ တိုင်ဗောက်ချာများကို ဖုန်းတွင် Memory Crash လုံးဝမဖြစ်စေရန် အထူးပြုပြင်ထားသည်။")
+    st.success("V32: Sheet ထဲမဝင်သည့်ပြဿနာကို ဖြေရှင်းထားသည်။")
 
-up_file = st.file_uploader("၈ တိုင်ဗောက်ချာပုံကို ရွေးပါ", type=['jpg', 'jpeg', 'png'])
+up_file = st.file_uploader("ပုံတင်ပေးပါ", type=['jpg', 'jpeg', 'png'])
 
-def process_v31(img, n_cols):
+def process_v32(img, n_cols):
     reader = load_ocr()
     h, w = img.shape[:2]
-    
-    # ဖုန်း RAM နှင့်ကိုက်ညီအောင် Resolution ကို ညှိခြင်း
-    target_w = 1100
+    # RAM ပိုချွေတာရန် width ကို လျှော့ချသည်
+    target_w = 1000 
     img_resized = cv2.resize(img, (target_w, int(h * (target_w / w))))
     gray = cv2.cvtColor(img_resized, cv2.COLOR_BGR2GRAY)
     
-    # စာလုံးများ ပိုမိုထင်ရှားစေရန် Contrast မြှင့်ခြင်း
-    clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8,8))
-    gray = clahe.apply(gray)
-
+    # ၈ တိုင်စလုံး မိအောင် အပိုင်း ၈ ပိုင်းခွဲဖတ်မည်
     h_gray = gray.shape[0]
     all_results = []
-    
-    # ပုံကို ၈ ပိုင်းအထိ ခွဲဖတ်ခြင်းဖြင့် RAM ဝန်ကို အနည်းဆုံးဖြစ်စေသည်
     num_parts = 8
-    progress_bar = st.progress(0)
     
     for i in range(num_parts):
-        y1 = max(0, int(h_gray * (i/num_parts)) - 30)
-        y2 = min(h_gray, int(h_gray * ((i+1)/num_parts)) + 30)
+        y1 = max(0, int(h_gray * (i/num_parts)) - 25)
+        y2 = min(h_gray, int(h_gray * ((i+1)/num_parts)) + 25)
         segment = gray[y1:y2, :]
-        
-        res = reader.readtext(segment, paragraph=False, width_ths=0.4)
+        res = reader.readtext(segment, paragraph=False, detail=1)
         for (bbox, text, prob) in res:
             cx = np.mean([p[0] for p in bbox])
             cy = np.mean([p[1] for p in bbox]) + y1
             all_results.append({'x': cx, 'y': cy, 'text': text})
-        
-        progress_bar.progress((i + 1) / num_parts)
         del segment
         gc.collect()
 
     if not all_results: return []
 
-    # ROW CLUSTERING
     all_results.sort(key=lambda k: k['y'])
     rows_list = []
-    y_threshold = 22
+    y_threshold = 20
     current_row = [all_results[0]]
     for i in range(1, len(all_results)):
         if all_results[i]['y'] - current_row[-1]['y'] < y_threshold:
@@ -92,59 +87,53 @@ def process_v31(img, n_cols):
 
     col_edges = np.linspace(0, target_w, n_cols + 1)
     final_grid = []
-
     for row_items in rows_list:
         row_cells = ["" for _ in range(n_cols)]
-        bins = [[] for _ in range(n_cols)]
         for item in row_items:
             c_idx = int(np.searchsorted(col_edges, item['x']) - 1)
-            if 0 <= c_idx < n_cols: bins[c_idx].append(item)
-        
-        for c in range(n_cols):
-            bins[c].sort(key=lambda k: k['x'])
-            txt = "".join([i['text'].upper() for i in bins[c]]).strip()
-            
-            # --- ADVANCED DITTO & NOISE FIX ---
-            # လက်ရေး "။" ကို AI မှ မှားဖတ်လေ့ရှိသော စာလုံးပုံစံများ
-            is_ditto = any(m in txt for m in ['"', '။', '=', '||', 'LL', '`', 'V', '4', 'U', 'Y', '/', '11', 'I', '(', ')', 'N', 'H'])
-            
-            if is_ditto and len(re.sub(r'[^0-9]', '', txt)) < 3:
-                row_cells[c] = "DITTO"
-            else:
-                num = re.sub(r'[^0-9]', '', txt)
-                if num:
-                    if c % 2 == 0: row_cells[c] = num.zfill(3) if len(num) <= 3 else num[:3]
-                    else: row_cells[c] = num
+            if 0 <= c_idx < n_cols:
+                # ဂဏန်းမဟုတ်သော စာသားများပါက ဖျက်ထုတ်မည်
+                clean_txt = re.sub(r'[^0-9"။=LL/UVYI\(\)]', '', item['text'].upper())
+                row_cells[c_idx] = clean_txt
         final_grid.append(row_cells)
 
-    # Smart Fill Down (Ditto အတွက် အပေါ်တန်ဖိုးယူခြင်း)
-    for c in range(n_cols):
-        if c % 2 != 0: 
-            last_amt = ""
-            for r in range(len(final_grid)):
-                val = str(final_grid[r][c]).strip()
-                if (val == "DITTO" or val == "") and last_amt:
-                    final_grid[r][c] = last_amt
-                elif val != "DITTO" and val != "":
-                    last_amt = val
-        else:
-            for r in range(len(final_grid)):
-                if final_grid[r][c] == "DITTO": final_grid[r][c] = ""
-                
+    # Smart Formatting & Fill Down
+    for r in range(len(final_grid)):
+        for c in range(n_cols):
+            val = final_grid[r][c]
+            # ဂဏန်း ၃ လုံးဖြစ်အောင် ညှိခြင်း
+            if c % 2 == 0 and val.isdigit():
+                final_grid[r][c] = val.zfill(3)
+            # Ditto Logic
+            elif any(m in val for m in ['"', '။', '=', 'L', '/', 'V', 'U', 'Y', 'I']):
+                final_grid[r][c] = "DITTO"
+
+    # Fill Amount
+    for c in range(1, n_cols, 2):
+        last_v = ""
+        for r in range(len(final_grid)):
+            if final_grid[r][c] == "DITTO" and last_v: final_grid[r][c] = last_v
+            elif final_grid[r][c].isdigit(): last_v = final_grid[r][c]
+    
+    # Clean Numbers
+    for c in range(0, n_cols, 2):
+        for r in range(len(final_grid)):
+            if final_grid[r][c] == "DITTO": final_grid[r][c] = ""
+
     return final_grid
 
 if up_file:
     file_bytes = np.frombuffer(up_file.read(), np.uint8)
     img = cv2.imdecode(file_bytes, 1)
-    st.image(img, width=400, caption="Uploaded Image")
+    st.image(img, width=400)
     
-    if st.button(f"🔍 ၈ တိုင်စလုံး Scan ဖတ်မည်"):
-        with st.spinner("ဖုန်း Memory ချွေတာပြီး အသေးစိတ် ဖတ်နေပါသည်..."):
-            res = process_v31(img, a_cols)
-            st.session_state['data_v31'] = res
+    if st.button(f"🔍 {a_cols} တိုင် Scan ဖတ်မည်"):
+        with st.spinner("ဖတ်နေပါသည်..."):
+            res = process_v32(img, a_cols)
+            st.session_state['data_v32'] = res
 
-if 'data_v31' in st.session_state:
-    edited = st.data_editor(st.session_state['data_v31'], use_container_width=True)
-    if st.button("💾 Google Sheet ထဲသို့ ပို့မည်"):
-        if save_to_sheets_v31(edited):
-            st.success("အောင်မြင်စွာ ပို့ဆောင်ပြီးပါပြီ!")
+if 'data_v32' in st.session_state:
+    edited = st.data_editor(st.session_state['data_v32'], use_container_width=True)
+    if st.button("💾 Google Sheet ထဲသို့ အသေအချာ သိမ်းမည်"):
+        if save_to_sheets_v32(edited):
+            st.success("Sheet ထဲသို့ ဒေတာများ အကုန်ရောက်သွားပါပြီ!")
