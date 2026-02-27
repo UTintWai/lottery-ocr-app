@@ -7,16 +7,19 @@ import gspread
 from oauth2client.service_account import ServiceAccountCredentials
 
 # --- CONFIG ---
-st.set_page_config(page_title="Lottery Scanner v25", layout="wide")
+st.set_page_config(page_title="Lottery Scanner v26", layout="wide")
 
 @st.cache_resource
 def load_ocr():
-    # RAM ချွေတာရန် GPU ပိတ်ထားပြီး အပေါ့ပါးဆုံး model သုံးမည်
-    return easyocr.Reader(['en'], gpu=False, download_enabled=True)
+    # RAM crash မဖြစ်အောင် model storage ကို ပိုထိန်းထားပါတယ်
+    return easyocr.Reader(['en'], gpu=False)
 
-reader = load_ocr()
+try:
+    reader = load_ocr()
+except Exception:
+    st.error("OCR Model တက်လာဖို့ ခေတ္တစောင့်ပေးပါ သို့မဟုတ် Refresh လုပ်ပေးပါဗျ။")
 
-def save_to_sheets_v25(data):
+def save_to_sheets_v26(data):
     try:
         scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
         creds_dict = st.secrets["gcp_service_account"]
@@ -24,7 +27,7 @@ def save_to_sheets_v25(data):
         client = gspread.authorize(creds)
         sheet = client.open("LotteryData").get_worksheet(0)
         
-        # '062' ကဲ့သို့ ပေါ်ရန် single quote ထည့်မည်
+        # Google Sheet မှာ 062 ကဲ့သို့ ပေါ်ရန် ' ခံပေးမည်
         formatted = [[f"'{str(c)}" if str(c).strip() != "" else "" for c in row] for row in data]
         if formatted:
             sheet.append_rows(formatted)
@@ -33,23 +36,23 @@ def save_to_sheets_v25(data):
         st.error(f"Sheet Error: {str(e)}")
         return False
 
-st.title("🔢 Lottery Precision Scanner v25")
+st.title("🔢 Lottery Precision Scanner v26")
 
 with st.sidebar:
     a_cols = st.selectbox("တိုင်အရေအတွက်", [2, 4, 6, 8], index=3)
-    st.info("V25: Memory Crash မဖြစ်စေရန်နှင့် လက်ရေး Ditto (။) အတွက် အထူးပြင်ဆင်ထားသည်။")
+    st.success("V26: Memory Management နှင့် လက်ရေး Ditto Logic ကို အထူးမြှင့်တင်ထားသည်။")
 
 up_file = st.file_uploader("ဗောက်ချာပုံ တင်ပေးပါ", type=['jpg', 'jpeg', 'png'])
 
-def process_v25(img, n_cols):
+def process_v26(img, n_cols):
     h, w = img.shape[:2]
-    # RAM crash မဖြစ်စေရန် resolution ကို ၁၂၀၀ ဝန်းကျင်သာ ထားပါမည်
-    target_w = 1200
+    # RAM ချွေတာရန် resolution ကို ၁၀၀၀ သာ ထားပါမည်
+    target_w = 1000
     img_resized = cv2.resize(img, (target_w, int(h * (target_w / w))))
     gray = cv2.cvtColor(img_resized, cv2.COLOR_BGR2GRAY)
     
-    # link_threshold မြှင့်ပြီး mag_ratio ကို ထိန်းညှိခြင်းဖြင့် memory သက်သာစေသည်
-    results = reader.readtext(gray, paragraph=False, link_threshold=0.4, mag_ratio=1.2)
+    # OCR Settings (လက်ရေးအတွက် link_threshold ကို ချိန်ညှိထားသည်)
+    results = reader.readtext(gray, paragraph=False, link_threshold=0.3, mag_ratio=1.0)
     
     raw_data = []
     for (bbox, text, prob) in results:
@@ -59,10 +62,10 @@ def process_v25(img, n_cols):
 
     if not raw_data: return []
 
-    # ROW CLUSTERING (အကြောင်းအကွက်များ မကျန်စေရန် threshold ကို ၂၀ ထိ လျှော့ထားသည်)
+    # ROW CLUSTERING (စာကြောင်းများ မလွတ်စေရန် threshold ကို ၂၅ ထားသည်)
     raw_data.sort(key=lambda k: k['y'])
     rows_list = []
-    y_threshold = 20
+    y_threshold = 25
     current_row = [raw_data[0]]
     for i in range(1, len(raw_data)):
         if raw_data[i]['y'] - current_row[-1]['y'] < y_threshold:
@@ -86,22 +89,24 @@ def process_v25(img, n_cols):
             bins[c].sort(key=lambda k: k['x'])
             txt = "".join([i['text'] for i in bins[c]])
             
-            # --- လက်ရေး Ditto (။) ကို ဂဏန်းနဲ့ မမှားအောင် စစ်သည့် logic ---
-            # လက်ရေး "။" သည် များသောအားဖြင့် ၁ လုံး သို့ ၂ လုံးသာ ရှိတတ်သည်
-            is_likely_ditto = any(m in txt for m in ['"', '။', '=', '||', 'LL', '`', 'V', '4', 'U', 'Y', '/', '11', 'I'])
+            # --- လက်ရေး Ditto (။) စစ်ဆေးခြင်း ---
+            # လက်ရေး "။" ကို AI မှ 4, u, v, n, 11, / စသည်ဖြင့် မှားဖတ်လေ့ရှိသည်ကို စစ်ဆေးမည်
+            is_ditto_char = any(m in txt for m in ['"', '။', '=', '||', 'LL', '`', 'V', '4', 'U', 'Y', '/', '11', 'I', '(', ')', 'N'])
             
-            if is_likely_ditto and len(re.sub(r'[^0-9]', '', txt)) < 3:
+            if is_ditto_char and len(re.sub(r'[^0-9]', '', txt)) < 3:
                 row_cells[c] = "DITTO"
             else:
                 num = re.sub(r'[^0-9]', '', txt)
                 if num:
-                    if c % 2 == 0: row_cells[c] = num.zfill(3) if len(num) <= 3 else num[:3]
-                    else: row_cells[c] = num
+                    if c % 2 == 0: # ဂဏန်းတိုင်
+                        row_cells[c] = num.zfill(3) if len(num) <= 3 else num[:3]
+                    else: # ထိုးကြေးတိုင်
+                        row_cells[c] = num
         final_grid.append(row_cells)
 
-    # Smart Fill Down (အပေါ်က ထိုးကြေးကို ကူးယူခြင်း)
+    # --- Smart Fill Down Logic ---
     for c in range(n_cols):
-        if c % 2 != 0: 
+        if c % 2 != 0: # ထိုးကြေးတိုင်အတွက်သာ အပေါ်ကကူးမည်
             last_amt = ""
             for r in range(len(final_grid)):
                 val = final_grid[r][c].strip()
@@ -109,7 +114,7 @@ def process_v25(img, n_cols):
                     final_grid[r][c] = last_amt
                 elif val not in ["DITTO", ""]:
                     last_amt = val
-        else:
+        else: # ဂဏန်းတိုင်တွင် Ditto ဖြစ်နေပါက ဖျောက်မည်
             for r in range(len(final_grid)):
                 if final_grid[r][c] == "DITTO": final_grid[r][c] = ""
                 
@@ -121,15 +126,15 @@ if up_file:
     st.image(img, width=450)
     
     if st.button(f"🔍 Scan {a_cols} Columns"):
-        with st.spinner("Processing..."):
+        with st.spinner("ဖတ်နေပါသည်..."):
             try:
-                res = process_v25(img, a_cols)
-                st.session_state['data_v25'] = res
+                res = process_v26(img, a_cols)
+                st.session_state['data_v26'] = res
             except Exception as e:
-                st.error("Memory လောက်အောင် ပုံကို အနားကပ်ပြီး တစ်ဝက်စီ ခွဲရိုက်ပေးပါဗျ။")
+                st.error("Memory လောက်အောင် ပုံကို အရွယ်အစား လျှော့တင်ပေးပါဗျ။")
 
-if 'data_v25' in st.session_state:
-    edited = st.data_editor(st.session_state['data_v25'], use_container_width=True)
+if 'data_v26' in st.session_state:
+    edited = st.data_editor(st.session_state['data_v26'], use_container_width=True)
     if st.button("💾 Google Sheet သိမ်းမည်"):
-        if save_to_sheets_v25(edited):
-            st.success("Sheet ထဲသို့ ပို့ပြီးပါပြီ!")
+        if save_to_sheets_v26(edited):
+            st.success("Sheet ထဲသို့ အောင်မြင်စွာ ပို့ဆောင်ပြီးပါပြီ!")
