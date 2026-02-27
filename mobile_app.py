@@ -7,16 +7,16 @@ import gspread
 from oauth2client.service_account import ServiceAccountCredentials
 
 # --- CONFIG ---
-st.set_page_config(page_title="Lottery Scanner v24", layout="wide")
+st.set_page_config(page_title="Lottery Scanner v25", layout="wide")
 
 @st.cache_resource
 def load_ocr():
-    # လက်ရေးအတွက် link_threshold ကို အကောင်းဆုံးအနေအထား 0.4 ထားပါမည်
-    return easyocr.Reader(['en'], gpu=False)
+    # RAM ချွေတာရန် GPU ပိတ်ထားပြီး အပေါ့ပါးဆုံး model သုံးမည်
+    return easyocr.Reader(['en'], gpu=False, download_enabled=True)
 
 reader = load_ocr()
 
-def save_to_sheets_v24(data):
+def save_to_sheets_v25(data):
     try:
         scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
         creds_dict = st.secrets["gcp_service_account"]
@@ -24,7 +24,7 @@ def save_to_sheets_v24(data):
         client = gspread.authorize(creds)
         sheet = client.open("LotteryData").get_worksheet(0)
         
-        # 062 ကဲ့သို့သော ဂဏန်းများအတွက် formatting သေချာစေရန်
+        # '062' ကဲ့သို့ ပေါ်ရန် single quote ထည့်မည်
         formatted = [[f"'{str(c)}" if str(c).strip() != "" else "" for c in row] for row in data]
         if formatted:
             sheet.append_rows(formatted)
@@ -33,35 +33,36 @@ def save_to_sheets_v24(data):
         st.error(f"Sheet Error: {str(e)}")
         return False
 
-st.title("🔢 Lottery Scanner v24 (Precision Focus)")
+st.title("🔢 Lottery Precision Scanner v25")
 
 with st.sidebar:
     a_cols = st.selectbox("တိုင်အရေအတွက်", [2, 4, 6, 8], index=3)
-    st.warning("V24: လက်ရေး Ditio (။) များကို ပိုမိုတိကျစွာ ခွဲခြားနိုင်အောင် ပြုပြင်ထားပါသည်။")
+    st.info("V25: Memory Crash မဖြစ်စေရန်နှင့် လက်ရေး Ditto (။) အတွက် အထူးပြင်ဆင်ထားသည်။")
 
 up_file = st.file_uploader("ဗောက်ချာပုံ တင်ပေးပါ", type=['jpg', 'jpeg', 'png'])
 
-def process_v24(img, n_cols):
+def process_v25(img, n_cols):
     h, w = img.shape[:2]
-    target_w = 1400 
+    # RAM crash မဖြစ်စေရန် resolution ကို ၁၂၀၀ ဝန်းကျင်သာ ထားပါမည်
+    target_w = 1200
     img_resized = cv2.resize(img, (target_w, int(h * (target_w / w))))
     gray = cv2.cvtColor(img_resized, cv2.COLOR_BGR2GRAY)
     
-    # လက်ရေးအတွက် အသေးစိတ်ဖတ်ရန် settings
-    results = reader.readtext(gray, paragraph=False, link_threshold=0.4, mag_ratio=1.5, min_size=10)
+    # link_threshold မြှင့်ပြီး mag_ratio ကို ထိန်းညှိခြင်းဖြင့် memory သက်သာစေသည်
+    results = reader.readtext(gray, paragraph=False, link_threshold=0.4, mag_ratio=1.2)
     
     raw_data = []
     for (bbox, text, prob) in results:
         cx = np.mean([p[0] for p in bbox])
         cy = np.mean([p[1] for p in bbox])
-        raw_data.append({'x': cx, 'y': cy, 'text': text.strip().upper(), 'prob': prob})
+        raw_data.append({'x': cx, 'y': cy, 'text': text.strip().upper()})
 
     if not raw_data: return []
 
-    # ROW CLUSTERING
+    # ROW CLUSTERING (အကြောင်းအကွက်များ မကျန်စေရန် threshold ကို ၂၀ ထိ လျှော့ထားသည်)
     raw_data.sort(key=lambda k: k['y'])
     rows_list = []
-    y_threshold = 28
+    y_threshold = 20
     current_row = [raw_data[0]]
     for i in range(1, len(raw_data)):
         if raw_data[i]['y'] - current_row[-1]['y'] < y_threshold:
@@ -77,43 +78,38 @@ def process_v24(img, n_cols):
     for row_items in rows_list:
         row_cells = ["" for _ in range(n_cols)]
         bins = [[] for _ in range(n_cols)]
-        
         for item in row_items:
             c_idx = int(np.searchsorted(col_edges, item['x']) - 1)
             if 0 <= c_idx < n_cols: bins[c_idx].append(item)
         
         for c in range(n_cols):
             bins[c].sort(key=lambda k: k['x'])
-            combined_txt = "".join([i['text'] for i in bins[c]])
+            txt = "".join([i['text'] for i in bins[c]])
             
-            # --- IMPROVED DITTO RECOGNITION ---
-            # လက်ရေး "။" ကို AI မှ 4, 11, U, V, 11, / စသည်ဖြင့် မှားဖတ်လေ့ရှိသည်ကို logic ဖြင့်စစ်မည်
-            # အကယ်၍ စာသားသည် တိုပြီး အောက်ပါ pattern များထဲပါက Ditto ဟု ယူဆမည်
-            is_ditto_pattern = any(m in combined_txt for m in ['"', '။', '=', '||', 'LL', '`', 'V', '4', 'U', 'Y', '11', '/', '(', ')', 'I'])
+            # --- လက်ရေး Ditto (။) ကို ဂဏန်းနဲ့ မမှားအောင် စစ်သည့် logic ---
+            # လက်ရေး "။" သည် များသောအားဖြင့် ၁ လုံး သို့ ၂ လုံးသာ ရှိတတ်သည်
+            is_likely_ditto = any(m in txt for m in ['"', '။', '=', '||', 'LL', '`', 'V', '4', 'U', 'Y', '/', '11', 'I'])
             
-            if is_ditto_pattern and len(combined_txt) <= 2:
+            if is_likely_ditto and len(re.sub(r'[^0-9]', '', txt)) < 3:
                 row_cells[c] = "DITTO"
             else:
-                num = re.sub(r'[^0-9]', '', combined_txt)
+                num = re.sub(r'[^0-9]', '', txt)
                 if num:
-                    if c % 2 == 0: # ဂဏန်းတိုင် (၃ လုံးဖြစ်စေရန်)
-                        row_cells[c] = num.zfill(3) if len(num) <= 3 else num[:3]
-                    else: # ထိုးကြေးတိုင်
-                        row_cells[c] = num
+                    if c % 2 == 0: row_cells[c] = num.zfill(3) if len(num) <= 3 else num[:3]
+                    else: row_cells[c] = num
         final_grid.append(row_cells)
 
-    # --- ADVANCED AUTO-FILL ---
+    # Smart Fill Down (အပေါ်က ထိုးကြေးကို ကူးယူခြင်း)
     for c in range(n_cols):
-        if c % 2 != 0: # ထိုးကြေးတိုင်
+        if c % 2 != 0: 
             last_amt = ""
             for r in range(len(final_grid)):
                 val = final_grid[r][c].strip()
-                # အကယ်၍ အကွက်လွတ်နေလျှင် သို့မဟုတ် Ditto ဖြစ်လျှင် အပေါ်ကတန်ဖိုးယူမည်
-                if val in ["DITTO", ""]:
-                    if last_amt: final_grid[r][c] = last_amt
-                else:
+                if val in ["DITTO", ""] and last_amt:
+                    final_grid[r][c] = last_amt
+                elif val not in ["DITTO", ""]:
                     last_amt = val
-        else: # ဂဏန်းတိုင်
+        else:
             for r in range(len(final_grid)):
                 if final_grid[r][c] == "DITTO": final_grid[r][c] = ""
                 
@@ -122,15 +118,18 @@ def process_v24(img, n_cols):
 if up_file:
     file_bytes = np.frombuffer(up_file.read(), np.uint8)
     img = cv2.imdecode(file_bytes, 1)
-    st.image(img, width=500)
+    st.image(img, width=450)
     
     if st.button(f"🔍 Scan {a_cols} Columns"):
-        with st.spinner("လက်ရေးများကို သေချာစွာ စစ်ဆေးနေပါသည်..."):
-            res = process_v24(img, a_cols)
-            st.session_state['data_v24'] = res
+        with st.spinner("Processing..."):
+            try:
+                res = process_v25(img, a_cols)
+                st.session_state['data_v25'] = res
+            except Exception as e:
+                st.error("Memory လောက်အောင် ပုံကို အနားကပ်ပြီး တစ်ဝက်စီ ခွဲရိုက်ပေးပါဗျ။")
 
-if 'data_v24' in st.session_state:
-    edited = st.data_editor(st.session_state['data_v24'], use_container_width=True)
+if 'data_v25' in st.session_state:
+    edited = st.data_editor(st.session_state['data_v25'], use_container_width=True)
     if st.button("💾 Google Sheet သိမ်းမည်"):
-        if save_to_sheets_v24(edited):
-            st.success("Sheet ထဲသို့ ဒေတာများ အောင်မြင်စွာ ပို့ဆောင်ပြီးပါပြီ!")
+        if save_to_sheets_v25(edited):
+            st.success("Sheet ထဲသို့ ပို့ပြီးပါပြီ!")
