@@ -74,7 +74,6 @@ def process_side_v63(img):
 
     processed_data = []
     # 🎯 VIRTUAL GRID LOCK (တိုင် ၄ တိုင်ကို Pixel အတိအကျ ပိုင်းခြားခြင်း)
-    # တိုင်တစ်ခုချင်းစီ၏ နယ်နိမိတ် [0-450, 451-900, 901-1350, 1351-1800]
     col_width = target_w / 4
     
     for r_items in rows:
