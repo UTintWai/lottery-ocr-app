@@ -7,7 +7,7 @@ import gspread
 from oauth2client.service_account import ServiceAccountCredentials
 
 # --- 1. CONFIGURATION ---
-st.set_page_config(page_title="Lottery Pro v57", layout="wide")
+st.set_page_config(page_title="Lottery Pro v58", layout="wide")
 SHEET_NAME = "LotteryData"  # သင့် Sheet နာမည်နဲ့ ကိုက်အောင်ပြင်ပါ
 
 # --- 2. GOOGLE SHEETS CONNECTION ---
@@ -15,22 +15,23 @@ def save_to_gsheet(data):
     try:
         scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
         
-        # Streamlit Secrets ထဲမှာ gcp_service_account ဆိုပြီး credentials တွေ ထည့်ထားရပါမယ်
+        # Streamlit Secrets ထဲမှာ credentials ရှိမရှိစစ်သည်
         if "gcp_service_account" not in st.secrets:
-            st.error("Streamlit Secrets ထဲမှာ Credentials မရှိသေးပါဗျ။")
+            st.error("Secrets ထဲမှာ Credentials မရှိသေးပါဗျ။ Settings > Secrets မှာ ထည့်ပေးပါ။")
             return False
             
-        creds = ServiceAccountCredentials.from_json_keyfile_dict(st.secrets["gcp_service_account"], scope)
+        creds_dict = dict(st.secrets["gcp_service_account"])
+        creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
         client = gspread.authorize(creds)
         
-        # Sheet ကိုဖွင့်ပြီး ပထမဆုံး စာမျက်နှာကိုယူသည်
+        # Sheet ကိုဖွင့်သည်
         sheet = client.open(SHEET_NAME).sheet1
         
-        # ဒေတာအသစ်များကို အောက်ဆုံးကနေ ဆက်ထည့်သည်
-        sheet.append_rows(data)
+        # ဒေတာများကို အောက်ဆုံးကနေ ဆက်ထည့်သည်
+        sheet.append_rows(data, value_input_option='USER_ENTERED')
         return True
     except Exception as e:
-        st.error(f"Sheet သိမ်းလို့မရပါ: {e}")
+        st.error(f"Sheet Error: {e}")
         return False
 
 # --- 3. OCR PROCESSING ENGINE ---
@@ -95,19 +96,19 @@ def process_side(img):
                         else: row_cells[c_idx] = num
         processed_side_data.append(row_cells)
     
-    # Amount Columns (1, 3) အတွက် Ditto fill လုပ်ခြင်း
+    # Amount Columns အတွက် Ditto fill လုပ်ခြင်း
     for c in [1, 3]:
         last_val = ""
         for r in range(len(processed_side_data)):
-            v = processed_side_data[r][c]
-            if v.isdigit(): last_val = v
+            v = str(processed_side_data[r][c])
+            if v.isdigit() and v != "": last_val = v
             elif (v == "DITTO" or v == "") and last_val != "":
                 processed_side_data[r][c] = last_val
             
     return processed_side_data
 
 # --- 4. USER INTERFACE (UI) ---
-st.title("🔢 Side-by-Side Expert v57")
+st.title("🔢 Side-by-Side Expert v58")
 st.write("ဘယ် ၄ တိုင် တစ်ပုံ၊ ညာ ၄ တိုင် တစ်ပုံ ခွဲတင်ပေးပါဗျ။")
 
 col1, col2 = st.columns(2)
@@ -136,15 +137,15 @@ if st.button("🔍 Combine and Scan"):
         r_row = right_data[i] if i < len(right_data) else ["","","",""]
         final_8_cols.append(l_row + r_row)
         
-    st.session_state['current_data'] = final_8_cols
+    st.session_state['combined_data'] = final_8_cols
 
 # --- 5. DATA TABLE & SAVE ---
-if 'current_data' in st.session_state:
+if 'combined_data' in st.session_state:
     st.subheader("ပေါင်းစပ်ပြီး ၈ တိုင် ဇယား")
-    edited_data = st.data_editor(st.session_state['current_data'], use_container_width=True, num_rows="dynamic")
+    edited_data = st.data_editor(st.session_state['combined_data'], use_container_width=True, num_rows="dynamic")
     
     if st.button("💾 Save to Google Sheet"):
-        with st.spinner("Sheet ထဲသို့ သိမ်းနေပါသည်..."):
+        with st.spinner("Sheet ထဲသို့ ပို့နေပါသည်..."):
             if save_to_gsheet(edited_data):
                 st.success("✅ Google Sheet ထဲသို့ အောင်မြင်စွာ သိမ်းဆည်းပြီးပါပြီ!")
                 st.balloons()
