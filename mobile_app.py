@@ -6,13 +6,13 @@ import re
 import gspread
 from oauth2client.service_account import ServiceAccountCredentials
 
-st.set_page_config(page_title="Lottery Pro v52", layout="wide")
+st.set_page_config(page_title="Lottery Pro v53", layout="wide")
 
 @st.cache_resource
 def load_ocr():
     return easyocr.Reader(['en'], gpu=False)
 
-def process_v52(img):
+def process_v53(img):
     reader = load_ocr()
     h, w = img.shape[:2]
     # Resolution ကို ပိုတိုးလိုက်သည် (စာလုံးသေးများ အနီးကပ်မြင်ရစေရန်)
@@ -98,7 +98,7 @@ def process_v52(img):
     return final_table
 
 # --- UI ---
-st.title("🔢 Lottery Pro v52 (Digit Distinction Fix)")
+st.title("🔢 Lottery Pro v53 (Digit Distinction Fix)")
 st.info("၃ နှင့် ၈၊ ၅ နှင့် ၆ တို့ကို ခွဲခြားနိုင်ရန် စာလုံးလိုင်းများကို ပါးလွှာပြတ်သားအောင် ပြုပြင်ထားပါသည်။")
 
 up_file = st.file_uploader("ဗောက်ချာပုံတင်ပါ", type=['jpg', 'jpeg', 'png'])
@@ -110,12 +110,12 @@ if up_file:
     
     if st.button("🔍 High-Precision Scan"):
         with st.spinner("စာလုံးများကို အနားသတ်ညှိပြီး ဖတ်နေပါသည်..."):
-            res = process_v52(img)
-            st.session_state['data_v52'] = res
+            res = process_v53(img)
+            st.session_state['data_v53'] = res
 
-if 'data_v52' in st.session_state:
+if 'data_v53' in st.session_state:
     st.subheader("စစ်ဆေးရန် ဇယား (Column A မှ H)")
-    edited = st.data_editor(st.session_state['data_v52'], use_container_width=True, num_rows="dynamic")
+    edited = st.data_editor(st.session_state['data_v53'], use_container_width=True, num_rows="dynamic")
     
     if st.button("💾 Save to Google Sheet"):
         st.success("Google Sheet ထဲသို့ ပို့လိုက်ပါပြီ!")
