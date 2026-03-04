@@ -8,7 +8,7 @@ import pandas as pd
 from oauth2client.service_account import ServiceAccountCredentials
 
 # --- CONFIG ---
-st.set_page_config(page_title="Lottery Pro v70", layout="wide")
+st.set_page_config(page_title="Lottery Pro v72", layout="wide")
 SHEET_NAME = "LotteryData" 
 
 def save_to_gsheet(data_to_save):
@@ -18,24 +18,16 @@ def save_to_gsheet(data_to_save):
             return False
         
         scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
-        
-        # Secrets စစ်ဆေးခြင်း
         if "gcp_service_account" not in st.secrets:
-            st.error("GCP Service Account Secrets မတွေ့ပါဘူး။ Streamlit Cloud မှာ Key ထည့်ထားတာ သေချာပါသလား?")
+            st.error("GCP Secrets မတွေ့ပါ။ Streamlit Cloud Settings မှာ Key ထည့်ပေးပါ။")
             return False
             
         creds_dict = dict(st.secrets["gcp_service_account"])
         creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
         client = gspread.authorize(creds)
         
-        # Sheet ဖွင့်ခြင်း
-        try:
-            sheet = client.open(SHEET_NAME).get_worksheet(0)
-        except Exception:
-            st.error(f"Sheet နာမည် '{SHEET_NAME}' ကို ရှာမတွေ့ပါဘူး။ နာမည်မှန်ပါသလား?")
-            return False
-            
-        # ဂဏန်းရှေ့က 0 မပျောက်အောင် ' ခံပြီး သိမ်းခြင်း
+        sheet = client.open(SHEET_NAME).get_worksheet(0)
+        # ဂဏန်းရှေ့က 0 မပျောက်အောင် ' ခံသည်
         formatted_rows = [[f"'{str(c)}" if str(c).strip() != "" else "" for c in row] for row in data_to_save]
         
         sheet.append_rows(formatted_rows, value_input_option='USER_ENTERED')
@@ -48,14 +40,14 @@ def save_to_gsheet(data_to_save):
 def load_ocr():
     return easyocr.Reader(['en'], gpu=False)
 
-def process_v70(img):
+def process_v72(img):
     reader = load_ocr()
     h, w = img.shape[:2]
     target_w = 1600
     img = cv2.resize(img, (target_w, int(h * (target_w / w))))
     gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
     
-    # ပုံအောက်ပိုင်း ကျဲနေတာတွေကို ပြင်ဖို့ CLAHE
+    # ပုံအောက်ပိုင်း ဝါးတာ/ကျဲတာကို နှိမ်ရန်
     clahe = cv2.createCLAHE(clipLimit=4.0, tileGridSize=(12,12))
     enhanced = clahe.apply(gray)
     
@@ -65,20 +57,18 @@ def process_v70(img):
     elements = [{'x': np.mean([p[0] for p in b]), 'y': np.mean([p[1] for p in b]), 'text': t} for (b, t, p) in results]
     elements.sort(key=lambda k: k['y'])
 
-    # 🎯 STRICT ROW MERGING (စာကြောင်းကျဲမှုကို ထိန်းချုပ်ခြင်း)
+    # 🎯 ROW MERGING (၂၅ တန်း ဝန်းကျင်ပဲ ဖြစ်စေရန်)
     rows = []
     if elements:
         curr_row = [elements[0]]
         for i in range(1, len(elements)):
             y_diff = elements[i]['y'] - curr_row[-1]['y']
-            
-            # အောက်ပိုင်းရောက်လေလေ ပိုကျယ်ကျယ် ပေါင်းပေးမည့် Threshold
-            # အစ်ကို့ပုံအရ အောက်ပိုင်းမှာ ၆၅ pixel အထိ သည်းခံပေါင်းခိုင်းထားပါတယ်
             current_y = elements[i]['y']
-            dynamic_limit = 40 if current_y < (h/2) else 65
+            # အောက်ပိုင်းကျဲနေပါက ၇၅ pixel အထိ သည်းခံပြီး ပေါင်းပေးမည်
+            dynamic_limit = 45 if current_y < (h/2) else 75
             
             if y_diff < dynamic_limit:
-                # Column မထပ်ရင် ပေါင်းမည်
+                # Column မထပ်အောင် စစ်ဆေးခြင်း
                 is_overlap = any(abs(elements[i]['x'] - item['x']) < 100 for item in curr_row)
                 if not is_overlap:
                     curr_row.append(elements[i])
@@ -97,7 +87,6 @@ def process_v70(img):
         for item in r_items:
             c_idx = int(item['x'] // col_width)
             if c_idx > 3: c_idx = 3
-            
             txt = item['text'].upper().strip()
             # Ditto Detection
             if re.search(r'[။၊"=“_…\.\-\']', txt) or (not txt.isdigit() and len(txt) == 1):
@@ -109,11 +98,10 @@ def process_v70(img):
                     if c_idx % 2 == 0: row_cells[c_idx] = num.zfill(3)[-3:]
                     else: row_cells[c_idx] = num
         
-        # အနည်းဆုံး ဂဏန်းတစ်ခုပါမှ Row အဖြစ်သတ်မှတ်သည်
         if any(c != "" for c in row_cells):
             processed_data.append(row_cells)
 
-    # Auto-Fill Ditto
+    # Auto-Ditto Filling
     for c in [1, 3]:
         last_val = ""
         for r in range(len(processed_data)):
@@ -124,32 +112,37 @@ def process_v70(img):
     return processed_data
 
 # --- UI ---
-st.title("🔢 Lottery Pro v70 (Sync Focus)")
-st.info("စာကြောင်းကျဲမှု ပြင်ဆင်ထားပြီး Sheet သိမ်းဆည်းမှုကို ပိုမိုခိုင်မာအောင် လုပ်ထားသည်။")
+st.title("🔢 Lottery Pro v72 (Instant Scan)")
+st.info("Scan ဖတ်ပြီးတာနဲ့ ဇယားကို ချက်ချင်း ပြသပေးပါမည်။")
 
 c1, c2 = st.columns(2)
-with c1: up_left = st.file_uploader("ဘယ် ၄ တိုင်", type=['jpg', 'png', 'jpeg'])
-with c2: up_right = st.file_uploader("ညာ ၄ တိုင်", type=['jpg', 'png', 'jpeg'])
+with c1: up_left = st.file_uploader("ဘယ်ဘက် ၄ တိုင်", type=['jpg', 'png', 'jpeg'], key="up_l")
+with c2: up_right = st.file_uploader("ညာဘက် ၄ တိုင်", type=['jpg', 'png', 'jpeg'], key="up_r")
 
-if st.button("🔍 Scan and Fix Rows"):
-    l_res, r_res = [], []
-    if up_left: l_res = process_v70(cv2.imdecode(np.frombuffer(up_left.read(), np.uint8), 1))
-    if up_right: r_res = process_v70(cv2.imdecode(np.frombuffer(up_right.read(), np.uint8), 1))
+if st.button("🔍 Scan Now"):
+    with st.spinner('ပုံကို စစ်ဆေးနေပါတယ် ခဏစောင့်ပါ...'):
+        l_res, r_res = [], []
+        if up_left: l_res = process_v72(cv2.imdecode(np.frombuffer(up_left.read(), np.uint8), 1))
+        if up_right: r_res = process_v72(cv2.imdecode(np.frombuffer(up_right.read(), np.uint8), 1))
             
-    max_r = max(len(l_res), len(r_res))
-    final = []
-    for i in range(max_r):
-        l = l_res[i] if i < len(l_res) else ["","","",""]
-        r = r_res[i] if i < len(r_res) else ["","","",""]
-        final.append(l + r)
-    st.session_state['v70_data'] = final
+        max_r = max(len(l_res), len(r_res))
+        final_table = []
+        for i in range(max_r):
+            l = l_res[i] if i < len(l_res) else ["","","",""]
+            r = r_res[i] if i < len(r_res) else ["","","",""]
+            final_table.append(l + r)
+        
+        st.session_state['data_v72'] = final_table
+        st.rerun() # 🎯 ဇယားပေါ်လာအောင် Screen ကို Refresh လုပ်ခိုင်းခြင်း
 
-if 'v70_data' in st.session_state:
-    st.subheader("စစ်ဆေးရန် ဇယား")
-    edited = st.data_editor(st.session_state['v70_data'], use_container_width=True, num_rows="dynamic")
+# ဇယားကို ပြသခြင်း
+if 'data_v72' in st.session_state:
+    st.subheader("စစ်ဆေးရန် ဇယားကွက်")
+    # အသုံးပြုသူ ပြင်ဆင်နိုင်ရန် Data Editor
+    st.session_state['data_v72'] = st.data_editor(st.session_state['data_v72'], use_container_width=True, num_rows="dynamic")
     
     if st.button("💾 Save to Google Sheet"):
-        with st.spinner('Sheet ထဲ ပို့နေပါတယ် ခဏစောင့်ပါ...'):
-            if save_to_gsheet(edited):
-                st.success("✅ Google Sheet ထဲကို အောင်မြင်စွာ သိမ်းဆည်းပြီးပါပြီ!")
+        with st.spinner('Sheet ထဲ သိမ်းနေပါသည်...'):
+            if save_to_gsheet(st.session_state['data_v72']):
+                st.success("✅ Google Sheet ထဲ သိမ်းဆည်းပြီးပါပြီ!")
                 st.balloons()
