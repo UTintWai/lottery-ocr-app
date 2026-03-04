@@ -8,7 +8,7 @@ import pandas as pd
 from oauth2client.service_account import ServiceAccountCredentials
 
 # --- CONFIG ---
-st.set_page_config(page_title="Lottery Pro v68", layout="wide")
+st.set_page_config(page_title="Lottery Pro v69", layout="wide")
 SHEET_NAME = "LotteryData" 
 
 def save_to_gsheet(data_to_save):
@@ -30,34 +30,39 @@ def save_to_gsheet(data_to_save):
 def load_ocr():
     return easyocr.Reader(['en'], gpu=False)
 
-def process_v68(img):
+def process_v69(img):
     reader = load_ocr()
     h, w = img.shape[:2]
     target_w = 1600
     img = cv2.resize(img, (target_w, int(h * (target_w / w))))
     gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
     
-    # ပုံကို ပိုကြည်လင်အောင် CLAHE နဲ့ Denoise လုပ်သည်
-    clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8,8))
-    gray = clahe.apply(gray)
-    dst = cv2.medianBlur(gray, 3)
-
-    results = reader.readtext(dst, paragraph=False, mag_ratio=1.5)
+    # ပုံအောက်ပိုင်း ဝေဝါးတာနဲ့ ကျဲတာကို ဖြေရှင်းရန် Contrast မြှင့်သည်
+    clahe = cv2.createCLAHE(clipLimit=3.0, tileGridSize=(10,10))
+    enhanced = clahe.apply(gray)
+    
+    results = reader.readtext(enhanced, paragraph=False, mag_ratio=2.0)
     if not results: return []
 
-    elements = [{'x': np.mean([p[0] for p in b]), 'y': np.mean([p[1] for p in b]), 
-                 'w': (b[1][0] - b[0][0]), 'text': t} for (b, t, p) in results]
-    
-    # ၁။ ROW CLUSTERING (စာကြောင်းများကို AI နည်းဖြင့် အကွာအဝေးတွက်ခွဲခြင်း)
+    elements = [{'x': np.mean([p[0] for p in b]), 'y': np.mean([p[1] for p in b]), 'text': t} for (b, t, p) in results]
     elements.sort(key=lambda k: k['y'])
+
+    # 🎯 ADAPTIVE ROW MERGING:
+    # ပုံရဲ့ အောက်ပိုင်း (y များတဲ့နေရာ) မှာ Threshold ကို ပိုမြှင့်ပေးခြင်း
     rows = []
     if elements:
         curr_row = [elements[0]]
-        # Threshold ကို ၃၅ မှာ ပုံသေထားပြီး ဂဏန်းထပ်တာကို ရှောင်သည်
         for i in range(1, len(elements)):
-            if elements[i]['y'] - curr_row[-1]['y'] < 35:
-                # ဂဏန်းတွေ တစ်ခုနဲ့တစ်ခု အရမ်းနီးကပ်နေရင် (ထပ်နေရင်) မပေါင်းပါနဲ့
-                is_overlap = any(abs(elements[i]['x'] - item['x']) < 50 for item in curr_row)
+            y_diff = elements[i]['y'] - curr_row[-1]['y']
+            
+            # 💡 Smart Gap Logic: အောက်ပိုင်းရောက်လေလေ (y တန်ဖိုးကြီးလေလေ) 
+            # စာကြောင်းတွေကို ပိုပြီး သည်းခံပေါင်းစည်းပေးသည် (Threshold 60 အထိ)
+            current_y = elements[i]['y']
+            dynamic_threshold = 35 if current_y < (h/2) else 60 
+            
+            if y_diff < dynamic_threshold:
+                # Column ထပ်နေတာမျိုး မရှိမှ ပေါင်းမည်
+                is_overlap = any(abs(elements[i]['x'] - item['x']) < 80 for item in curr_row)
                 if not is_overlap:
                     curr_row.append(elements[i])
                 else:
@@ -69,18 +74,14 @@ def process_v68(img):
         rows.append(curr_row)
 
     processed_data = []
-    # ၂။ COLUMN MAPPING (X-coordinate ကို ၄ ပိုင်း အချိုးကျ ခွဲခြင်း)
     col_width = target_w / 4
-    
     for r_items in rows:
         row_cells = ["" for _ in range(4)]
         for item in r_items:
-            x_pos = item['x']
-            c_idx = int(x_pos // col_width)
+            c_idx = int(item['x'] // col_width)
             if c_idx > 3: c_idx = 3
             
             txt = item['text'].upper().strip()
-            # Ditto Detection
             if re.search(r'[။၊"=“_…\.\-\']', txt) or (not txt.isdigit() and len(txt) == 1):
                 row_cells[c_idx] = "DITTO"
             else:
@@ -93,7 +94,7 @@ def process_v68(img):
         if any(row_cells):
             processed_data.append(row_cells)
 
-    # ၃။ SMART DITTO FILL (အပေါ်ကတန်ဖိုးကို ဆွဲချခြင်း)
+    # Smart Ditto Fill
     for c in [1, 3]:
         last_val = ""
         for r in range(len(processed_data)):
@@ -104,17 +105,17 @@ def process_v68(img):
     return processed_data
 
 # --- UI ---
-st.title("🔢 Lottery Pro v68 (Anti-Overlap)")
-st.info("ဂဏန်းများ ထပ်သွားခြင်း (Merge ဖြစ်ခြင်း) ကို ပြင်ဆင်ထားသော Version ဖြစ်ပါသည်။")
+st.title("🔢 Lottery Pro v69 (Adaptive Gap)")
+st.warning("ပုံအောက်ပိုင်း စာကြောင်းကျဲခြင်းကြောင့် အတန်းပိုထွက်လာမှုကို ပြင်ဆင်ထားပါသည်။")
 
 c1, c2 = st.columns(2)
 with c1: up_left = st.file_uploader("ပုံ (၁) - ဘယ် ၄ တိုင်", type=['jpg', 'png', 'jpeg'])
 with c2: up_right = st.file_uploader("ပုံ (၂) - ညာ ၄ တိုင်", type=['jpg', 'png', 'jpeg'])
 
-if st.button("🔍 Scan & Fix Rows"):
+if st.button("🔍 Scan and Merge Rows"):
     l_res, r_res = [], []
-    if up_left: l_res = process_v68(cv2.imdecode(np.frombuffer(up_left.read(), np.uint8), 1))
-    if up_right: r_res = process_v68(cv2.imdecode(np.frombuffer(up_right.read(), np.uint8), 1))
+    if up_left: l_res = process_v69(cv2.imdecode(np.frombuffer(up_left.read(), np.uint8), 1))
+    if up_right: r_res = process_v69(cv2.imdecode(np.frombuffer(up_right.read(), np.uint8), 1))
             
     max_r = max(len(l_res), len(r_res))
     final = []
@@ -122,11 +123,11 @@ if st.button("🔍 Scan & Fix Rows"):
         l = l_res[i] if i < len(l_res) else ["","","",""]
         r = r_res[i] if i < len(r_res) else ["","","",""]
         final.append(l + r)
-    st.session_state['v68_data'] = final
+    st.session_state['v69_data'] = final
 
-if 'v68_data' in st.session_state:
-    st.subheader("စစ်ဆေးရန် ဇယား")
-    edited = st.data_editor(st.session_state['v68_data'], use_container_width=True, num_rows="dynamic")
+if 'v69_data' in st.session_state:
+    st.subheader("စစ်ဆေးရန် ဇယား (၂၅ တန်း ဝန်းကျင်)")
+    edited = st.data_editor(st.session_state['v69_data'], use_container_width=True, num_rows="dynamic")
     
     col_s, col_c = st.columns(2)
     with col_s:
