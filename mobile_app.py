@@ -14,12 +14,19 @@ def save_to_gsheet(data_to_save):
     try:
         if not data_to_save: return False
         scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
+        
+        if "gcp_service_account" not in st.secrets:
+            st.error("Secrets configuration missing!")
+            return False
+            
         creds_dict = dict(st.secrets["gcp_service_account"])
         creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
         client = gspread.authorize(creds)
         sheet = client.open(SHEET_NAME).get_worksheet(0)
         
+        # ဂဏန်းရှေ့က 0 မပျောက်အောင် ' ခံပြီး သိမ်းခြင်း
         formatted_rows = [[f"'{str(c)}" if str(c).strip() != "" else "" for c in row] for row in data_to_save]
+        
         if formatted_rows:
             sheet.append_rows(formatted_rows, value_input_option='USER_ENTERED')
             return True
@@ -72,17 +79,18 @@ def process_v65(img):
         r_items.sort(key=lambda k: k['x'])
         row_cells = ["" for _ in range(4)]
         
+        # Smart column placement based on relative X position
         for i, item in enumerate(r_items[:4]):
             txt = item['text'].upper().strip()
-            # Ditto Detection
+            # Ditto Detection (", -, _, .)
             if re.search(r'[။၊"=“_…\.\-\']', txt):
                 row_cells[i] = "DITTO"
             else:
                 txt = txt.replace('S','5').replace('G','6').replace('B','8').replace('I','1').replace('O','0')
                 num = re.sub(r'[^0-9]', '', txt)
                 if num:
-                    if i % 2 == 0: row_cells[i] = num.zfill(3)[-3:]
-                    else: row_cells[i] = num
+                    if i % 2 == 0: row_cells[i] = num.zfill(3)[-3:] # ဂဏန်းတိုင်
+                    else: row_cells[i] = num # ထိုးကြေးတိုင်
         processed_data.append(row_cells)
 
     # ၄။ Auto-Fill Ditto (ထိုးကြေးများအတွက်)
@@ -109,7 +117,11 @@ if st.button("🔍 Start Scanning"):
     if up_right: r_data = process_v65(cv2.imdecode(np.frombuffer(up_right.read(), np.uint8), 1))
             
     max_r = max(len(l_data), len(r_data))
-    final = [ (l_data[i] if i < len(l_data) else ["","","",""]) + (r_data[i] if i < len(r_data) else ["","","",""]) for i in range(max_r) ]
+    final = []
+    for i in range(max_r):
+        l_row = l_data[i] if i < len(l_data) else ["","","",""]
+        r_row = r_data[i] if i < len(r_data) else ["","","",""]
+        final.append(l_row + r_row)
     st.session_state['v65_data'] = final
 
 if 'v65_data' in st.session_state:
