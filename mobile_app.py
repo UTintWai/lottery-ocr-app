@@ -7,7 +7,7 @@ import gspread
 from oauth2client.service_account import ServiceAccountCredentials
 
 # --- CONFIG ---
-st.set_page_config(page_title="Lottery Pro v75", layout="wide")
+st.set_page_config(page_title="Lottery Pro v76", layout="wide")
 SHEET_NAME = "LotteryData" 
 
 def save_to_gsheet(data_to_save):
@@ -29,94 +29,105 @@ def save_to_gsheet(data_to_save):
 def load_ocr():
     return easyocr.Reader(['en'], gpu=False)
 
-def process_v75(img):
+def process_column(img_col, is_number_col=True):
+    """တိုင်တစ်ခုချင်းစီကို OCR ဖတ်ပေးသည့် function"""
     reader = load_ocr()
-    h, w = img.shape[:2]
-    # Resolution ကို သင့်တင့်ရုံပဲ ထားသည် (စာလုံးတွေ မကွဲစေရန်)
-    target_w = 1200 
-    img = cv2.resize(img, (target_w, int(h * (target_w / w))))
+    # ပုံကို ပိုပြတ်သားအောင် Contrast မြှင့်သည်
+    gray = cv2.cvtColor(img_col, cv2.COLOR_BGR2GRAY)
+    clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8,8))
+    enhanced = clahe.apply(gray)
     
-    # 🎯 ရိုးရိုး Grayscale ပဲသုံးသည် (Filter အပိုတွေ မပါ)
-    gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+    results = reader.readtext(enhanced, paragraph=False)
+    # y position အလိုက် စီသည်
+    results.sort(key=lambda x: np.mean([p[1] for p in x[0]]))
     
-    results = reader.readtext(gray, paragraph=False)
-    if not results: return []
-
-    elements = [{'x': np.mean([p[0] for p in b]), 'y': np.mean([p[1] for p in b]), 'text': t} for (b, t, p) in results]
-    elements.sort(key=lambda k: k['y'])
-
-    # 🎯 ROW STABILIZER: ၂၅ တန်းဝန်းကျင်ပဲ ထွက်လာအောင် Threshold ကို ညှိခြင်း
-    rows = []
-    if elements:
-        curr_row = [elements[0]]
-        for i in range(1, len(elements)):
-            # အကွာအဝေး ၅၀ Pixel အတွင်းရှိရင် တစ်ကြောင်းတည်းဟု သတ်မှတ်သည်
-            if elements[i]['y'] - curr_row[-1]['y'] < 50:
-                curr_row.append(elements[i])
-            else:
-                rows.append(curr_row)
-                curr_row = [elements[i]]
-        rows.append(curr_row)
-
-    processed_data = []
-    col_split = target_w / 4
-    for r_items in rows:
-        row_cells = ["" for _ in range(4)]
-        for item in r_items:
-            c_idx = int(item['x'] // col_split)
-            if c_idx > 3: c_idx = 3
-            
-            txt = item['text'].upper().replace(' ', '')
-            # Ditto Detection
-            if re.search(r'[။၊"=“_…\.\-\']', txt):
-                row_cells[c_idx] = "DITTO"
-            else:
-                # Basic Error Fixes
-                txt = txt.replace('S','5').replace('G','6').replace('B','8').replace('I','1').replace('O','0').replace('D','0')
-                num = re.sub(r'[^0-9]', '', txt)
-                if num:
-                    if c_idx % 2 == 0: row_cells[c_idx] = num.zfill(3)[-3:]
-                    else: row_cells[c_idx] = num
+    data = []
+    for (bbox, text, prob) in results:
+        y_center = np.mean([p[1] for p in bbox])
+        txt = text.upper().replace(' ', '')
         
-        if any(row_cells): processed_data.append(row_cells)
+        # Ditto Check
+        if re.search(r'[။၊"=“_…\.\-\']', txt):
+            val = "DITTO"
+        else:
+            txt = txt.replace('S','5').replace('G','6').replace('B','8').replace('I','1').replace('O','0').replace('D','0')
+            num = re.sub(r'[^0-9]', '', txt)
+            if is_number_col and num:
+                val = num.zfill(3)[-3:]
+            else:
+                val = num
+        
+        if val:
+            data.append({'y': y_center, 'val': val})
+    return data
 
-    # Auto-Ditto Filling
+def process_v76(img):
+    h, w = img.shape[:2]
+    # ပုံကို တိုင် ၄ တိုင် အညီအမျှ ပိုင်းဖြတ်သည်
+    col_w = w // 4
+    final_rows = []
+    
+    # တိုင်တစ်ခုချင်းစီကို Scan ဖတ်သည်
+    all_cols_data = []
+    for i in range(4):
+        crop = img[:, i*col_w : (i+1)*col_w]
+        is_num = (i % 2 == 0)
+        col_data = process_column(crop, is_number_col=is_num)
+        all_cols_data.append(col_data)
+
+    # 🎯 ROW ALIGNMENT: Y-coordinate ကို သုံးပြီး တိုင် ၄ တိုင်က ဒေတာတွေကို ပြန်ပေါင်းသည်
+    # စုစုပေါင်း ၂၅ တန်းဝန်းကျင် ရစေရန် Y-bins (0 to h) ခွဲခြားသည်
+    bins = np.linspace(0, h, 27) # ၂၅ တန်း + Margin
+    structured_data = [["" for _ in range(4)] for _ in range(len(bins)-1)]
+    
+    for col_idx, col_items in enumerate(all_cols_data):
+        for item in col_items:
+            # ဘယ် bin ထဲမှာ ရှိသလဲ ရှာသည်
+            bin_idx = np.digitize(item['y'], bins) - 1
+            if 0 <= bin_idx < len(structured_data):
+                structured_data[bin_idx][col_idx] = item['val']
+
+    # အလွတ်အတန်းများကို ဖယ်ထုတ်သည်
+    cleaned_data = [r for r in structured_data if any(c != "" for c in r)]
+    
+    # Ditto Filling (ထိုးကြေးတိုင်များအတွက်)
     for c in [1, 3]:
-        last_val = ""
-        for r in range(len(processed_data)):
-            v = str(processed_data[r][c]).strip()
-            if v.isdigit(): last_val = v
-            elif (v == "DITTO" or v == "") and last_val != "":
-                processed_data[r][c] = last_val
-    return processed_data
+        last = ""
+        for r in range(len(cleaned_data)):
+            if cleaned_data[r][c].isdigit(): last = cleaned_data[r][c]
+            elif (cleaned_data[r][c] == "DITTO" or cleaned_data[r][c] == "") and last != "":
+                cleaned_data[r][c] = last
+                
+    return cleaned_data
 
 # --- UI ---
-st.title("🔢 Lottery Pro v75 (Stabilized Mode)")
-st.info("Filter အပိုများကို ဖြုတ်ထားပြီး အတန်း ၂၅ တန်းရရှိရေးကို ဦးစားပေးထားပါသည်။")
+st.title("🔢 Lottery Pro v76 (Column-wise Scanning)")
+st.info("တိုင်တစ်ခုချင်းစီကို အသေးစိတ်ဖြတ်ထုတ်ဖတ်သည့်စနစ်ဖြစ်ပါသည်။")
 
 c1, c2 = st.columns(2)
 with c1: up_l = st.file_uploader("ဘယ်ဘက် ၄ တိုင်", type=['jpg', 'png', 'jpeg'], key="l")
 with c2: up_r = st.file_uploader("ညာဘက် ၄ တိုင်", type=['jpg', 'png', 'jpeg'], key="r")
 
-if st.button("🔍 Run Scan"):
-    l_res, r_res = [], []
-    if up_l: l_res = process_v75(cv2.imdecode(np.frombuffer(up_l.read(), np.uint8), 1))
-    if up_r: r_res = process_v75(cv2.imdecode(np.frombuffer(up_r.read(), np.uint8), 1))
+if st.button("🔍 Precise Scan"):
+    with st.spinner('တစ်တိုင်ချင်းစီကို အသေးစိတ် စစ်ဆေးနေပါသည်...'):
+        l_res, r_res = [], []
+        if up_l: l_res = process_v76(cv2.imdecode(np.frombuffer(up_l.read(), np.uint8), 1))
+        if up_r: r_res = process_v76(cv2.imdecode(np.frombuffer(up_r.read(), np.uint8), 1))
             
-    max_r = max(len(l_res), len(r_res))
-    final = []
-    for i in range(max_r):
-        l = l_res[i] if i < len(l_res) else ["","","",""]
-        r = r_res[i] if i < len(r_res) else ["","","",""]
-        final.append(l + r)
-    
-    st.session_state['data_v75'] = final
-    st.rerun()
+        max_r = max(len(l_res), len(r_res))
+        final = []
+        for i in range(max_r):
+            l = l_res[i] if i < len(l_res) else ["","","",""]
+            r = r_res[i] if i < len(r_res) else ["","","",""]
+            final.append(l + r)
+        
+        st.session_state['data_v76'] = final
+        st.rerun()
 
-if 'data_v75' in st.session_state:
+if 'data_v76' in st.session_state:
     st.subheader("စစ်ဆေးရန် ဇယား")
-    st.session_state['data_v75'] = st.data_editor(st.session_state['data_v75'], use_container_width=True, num_rows="dynamic")
+    st.session_state['data_v76'] = st.data_editor(st.session_state['data_v76'], use_container_width=True, num_rows="dynamic")
     
     if st.button("💾 Save to Google Sheet"):
-        if save_to_gsheet(st.session_state['data_v75']):
+        if save_to_gsheet(st.session_state['data_v76']):
             st.success("✅ သိမ်းဆည်းပြီးပါပြီ!")
