@@ -35,7 +35,7 @@ def process_v86(img):
     img = cv2.resize(img, (1600, int(h * (1600 / w))))
     gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
     
-    # 🎯 MULTI-PASS DEEP SCAN (အကွက်လွတ်မကျန်စေရန် အလင်းအမှောင် ၄ မျိုးဖြင့်ဖတ်သည်)
+    # 🎯 MULTI-PASS DEEP SCAN (အကွက်လွတ်မကျန်စေရန် အလင်းအမှောင် ၃ မျိုးဖြင့်ဖတ်သည်)
     results = []
     # ၁။ မူလအတိုင်းဖတ်ခြင်း
     results += reader.readtext(gray)
