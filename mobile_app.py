@@ -7,7 +7,7 @@ import gspread
 from oauth2client.service_account import ServiceAccountCredentials
 
 # --- CONFIG ---
-st.set_page_config(page_title="Lottery Pro v86", layout="wide")
+st.set_page_config(page_title="Lottery Pro v87", layout="wide")
 SHEET_NAME = "LotteryData" 
 
 def save_to_gsheet(data_to_save):
@@ -27,25 +27,31 @@ def save_to_gsheet(data_to_save):
 
 @st.cache_resource
 def load_ocr():
+    # Model ကို အသစ်ပြန်တင်ရန် cache clear လုပ်ထားပါသည်
     return easyocr.Reader(['en'], gpu=False)
 
-def process_v86(img):
+def process_v87(uploaded_file):
+    if uploaded_file is None: return [[""]*4]*25
+    
+    # 🎯 SAFE IMAGE LOADING (ပုံကို မှန်ကန်စွာ ဖတ်ရန်)
+    file_bytes = np.asarray(bytearray(uploaded_file.read()), dtype=np.uint8)
+    img = cv2.imdecode(file_bytes, 1)
+    
+    if img is None: return [[""]*4]*25
+
     reader = load_ocr()
     h, w = img.shape[:2]
+    # ပုံကို AI ဖတ်ရလွယ်အောင် Standard Size ပြောင်းသည်
     img = cv2.resize(img, (1600, int(h * (1600 / w))))
     gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
     
-    # 🎯 MULTI-PASS DEEP SCAN (အကွက်လွတ်မကျန်စေရန် အလင်းအမှောင် ၃ မျိုးဖြင့်ဖတ်သည်)
+    # ပုံရိပ်ကို အလင်းအမှောင် ညှိနှိုင်းခြင်း (၃) မျိုး
     results = []
-    # ၁။ မူလအတိုင်းဖတ်ခြင်း
     results += reader.readtext(gray)
-    # ၂။ Contrast မြှင့်ဖတ်ခြင်း
-    results += reader.readtext(cv2.convertScaleAbs(gray, alpha=1.3, beta=0))
-    # ၃။ Sharpness မြှင့်ဖတ်ခြင်း
-    kernel = np.array([[-1,-1,-1], [-1,9,-1], [-1,-1,-1]])
-    results += reader.readtext(cv2.filter2D(gray, -1, kernel))
+    results += reader.readtext(cv2.convertScaleAbs(gray, alpha=1.4, beta=10))
     
-    bins = np.linspace(35, img.shape[0]-35, 26) 
+    # ၂၅ တန်း အတိအကျ Grid
+    bins = np.linspace(40, img.shape[0]-40, 26) 
     grid = [["" for _ in range(4)] for _ in range(25)]
     
     col_w = 1600 // 4
@@ -56,56 +62,61 @@ def process_v86(img):
         if c_idx > 3: c_idx = 3
         
         # စာလုံးမှ ဂဏန်းသို့ ပြောင်းလဲခြင်း
-        t = text.upper().replace('S','5').replace('G','6').replace('B','8').replace('I','1').replace('O','0').replace('D','0').replace('Z','2').replace('A','4')
+        t = text.upper().replace('S','5').replace('G','6').replace('B','8').replace('I','1').replace('O','0').replace('D','0').replace('Z','2')
         
-        if c_idx % 2 == 0: # ထိုးကွက် (၃ လုံးဂဏန်း)
+        if c_idx % 2 == 0: # ထိုးကွက် (၃ လုံး)
             val = re.sub(r'[^0-9]', '', t)
             if val: val = val.zfill(3)[-3:]
         else: # ထိုးကြေး (Amount)
             if re.search(r'[။၊"=“_…\.\-\']', t):
                 val = "DITTO"
             else:
-                # 🎯 အော်တို 00 ဖြည့်ခြင်းကို လုံးဝဖြုတ်လိုက်ပါပြီ
                 val = re.sub(r'[^0-9]', '', t)
 
         b_idx = np.digitize(y_c, bins) - 1
         if 0 <= b_idx < 25:
-            # အကွက်လွတ်နေမှသာ ဖြည့်စွက်သည်
             if grid[b_idx][c_idx] == "":
                 grid[b_idx][c_idx] = val
 
-    # Ditto Fill (Amount တိုင်များအတွက်သာ)
+    # Ditto Filling
     for c in [1, 3]:
         last = ""
         for r in range(25):
-            v = grid[r][c]
-            if v.isdigit() and v != "": last = v
-            elif (v == "DITTO" or v == "") and last != "":
+            if grid[r][c].isdigit() and grid[r][c] != "": last = grid[r][c]
+            elif (grid[r][c] == "DITTO" or grid[r][c] == "") and last != "":
                 grid[r][c] = last
                 
     return grid
 
 # --- UI ---
-st.title("🔢 Lottery Pro v86 (Deep Scan & Natural Amount)")
-st.info("အကွက်လွတ်များကို အစွမ်းကုန်ရှာဖွေပြီး ထိုးကြေးများကို အော်တိုမပြင်ဘဲ ဖတ်ပေးပါမည်။")
+st.title("🔢 Lottery Pro v87 (Safe Loader)")
+st.warning("ပုံတင်ပြီးနောက် 'Run Analysis' ခလုတ်ကို နှိပ်ပေးပါဗျ။")
 
 c1, c2 = st.columns(2)
-with c1: up_l = st.file_uploader("ဘယ် ၄ တိုင်", type=['jpg', 'png', 'jpeg'], key="l")
-with c2: up_r = st.file_uploader("ညာ ၄ တိုင်", type=['jpg', 'png', 'jpeg'], key="r")
+with c1: up_l = st.file_uploader("ဘယ် ၄ တိုင်", type=['jpg', 'png', 'jpeg'], key="up_l")
+with c2: up_r = st.file_uploader("ညာ ၄ တိုင်", type=['jpg', 'png', 'jpeg'], key="up_r")
 
-if st.button("🔍 Run Full Analysis"):
-    with st.spinner('ပုံကို အသေးစိတ် စစ်ဆေးနေပါသည်...'):
-        l_res = process_v86(cv2.imdecode(np.frombuffer(up_l.read(), np.uint8), 1)) if up_l else [[""]*4]*25
-        r_res = process_v86(cv2.imdecode(np.frombuffer(up_r.read(), np.uint8), 1)) if up_r else [[""]*4]*25
-        
-        final = [l_res[i] + r_res[i] for i in range(25)]
-        st.session_state['data_v86'] = final
-        st.rerun()
+if st.button("🔍 Run Analysis"):
+    if up_l or up_r:
+        with st.spinner('AI မှ ဂဏန်းများကို ဖတ်နေပါသည်...'):
+            l_res = process_v87(up_l) if up_l else [[""]*4]*25
+            r_res = process_v87(up_r) if up_r else [[""]*4]*25
+            
+            # ဒေတာနှစ်ခုကို ပေါင်းစပ်ခြင်း
+            st.session_state['final_data'] = [l_res[i] + r_res[i] for i in range(25)]
+            st.rerun()
+    else:
+        st.error("ကျေးဇူးပြု၍ ပုံအရင်တင်ပေးပါဗျ။")
 
-if 'data_v86' in st.session_state:
-    st.subheader("📝 စစ်ဆေးရန် ဇယား (၂၅ တန်း)")
-    st.session_state['data_v86'] = st.data_editor(st.session_state['data_v86'], use_container_width=True, num_rows="fixed")
+if 'final_data' in st.session_state:
+    st.subheader("📝 စစ်ဆေးရန် ဇယား")
+    # အကယ်၍ ဂဏန်းမပါလာသေးရင် ဒီဇယားထဲမှာတင် တိုက်ရိုက် ရိုက်ထည့်နိုင်ပါတယ်
+    st.session_state['final_data'] = st.data_editor(
+        st.session_state['final_data'], 
+        use_container_width=True, 
+        num_rows="fixed"
+    )
     
     if st.button("💾 Save to Google Sheet"):
-        if save_to_gsheet(st.session_state['data_v86']):
+        if save_to_gsheet(st.session_state['final_data']):
             st.success("✅ သိမ်းဆည်းပြီးပါပြီ!"); st.balloons()
